@@ -1,0 +1,22 @@
+{
+  "name": "mkstudios-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Express and MongoDB Atlas backend for MK Studios",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "mongoose": "^8.9.5"
+  }
+}
