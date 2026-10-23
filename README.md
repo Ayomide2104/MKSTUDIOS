@@ -52,7 +52,7 @@ npm start
 
 ## Frontend
 
-The site uses semantic HTML, custom CSS, and vanilla JavaScript, with Vite for local development and production builds. It does not add a frontend framework or animation library.
+The site uses semantic HTML, custom CSS, and vanilla JavaScript, with Vite for local development and production builds. Three.js powers the lazy-loaded glass hero scene.
 
 Start the API in one terminal (this connects to the configured Atlas database):
 
@@ -68,15 +68,27 @@ npm run frontend:dev
 
 Vite serves the site at `http://localhost:5173` and proxies `/api` requests to `http://localhost:3000`. Set `API_PROXY_TARGET` in the Vite process environment if the API listens elsewhere. This setting is a URL, not a secret.
 
-Create a static production build with:
+Create a production frontend build with:
 
 ```sh
 npm run frontend:build
 ```
 
-The generated site is in `dist/` and can be deployed to a static host. The Express server remains API-only. Project imagery, work, service scope, studio details, and contact destination are marked as placeholders where verified studio content was not available. The contact section does not submit messages.
+The generated site is in `dist/`. In production, Express serves this build and the API from the same web service. The Vite development server and `/api` proxy remain available for local development. This is a single-page site with anchor navigation, so unknown paths do not receive an HTML fallback. Project imagery, work, service scope, studio details, and contact destination are marked as placeholders where verified studio content was not available. The contact section does not submit messages.
 
-The server waits for the initial Atlas connection before listening. It defaults to port 3000. `CLIENT_URL` accepts a comma-separated list of allowed browser origins; configure the real frontend origin for deployment. Requests without an `Origin` header (such as curl) are allowed.
+The server waits for the initial Atlas connection before listening. It defaults to port 3000 locally and binds to `0.0.0.0` so hosted platforms can reach it. `CLIENT_URL` accepts a comma-separated list of allowed browser origins. It defaults to the Vite origin in development. For a same-origin production deployment, `CLIENT_URL` is optional; set it only when intentionally allowing a separate frontend origin. Requests without an `Origin` header (such as curl) are allowed.
+
+## Render deployment
+
+Create a Render **Web Service** from the connected GitHub repository and use:
+
+```text
+Build Command: npm install && npm run frontend:build
+Start Command: npm start
+Health Check Path: /api/health
+```
+
+The Node engine range is `>=22.12.0 <25`, matching Vite 7 and Render's supported current Node 24 runtime. Render supplies `PORT` and `NODE_ENV=production`. Add `MONGODB_URI` in the Render dashboard under **Environment**; enter the Atlas URI directly as an environment variable and never commit it. `CLIENT_URL` is only needed for an intentionally separate browser frontend origin. In Render, open the service, choose **Connect > Outbound**, and add the listed IP ranges in MongoDB Atlas **Network Access**. Avoid allowing all IPs when the service-specific ranges can be used.
 
 ## Health endpoints
 

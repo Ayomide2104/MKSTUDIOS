@@ -26,7 +26,7 @@ async function shutdown(signal) {
 async function start() {
   try {
     await connectDatabase();
-    server = app.listen(port, () => console.info(`API listening on port ${port}.`));
+    server = app.listen(port, '0.0.0.0', () => console.info(`Server listening on port ${port}.`));
   } catch (error) {
     const message = error.message === 'MONGODB_URI is required. Set it in your local .env file.'
       ? error.message
