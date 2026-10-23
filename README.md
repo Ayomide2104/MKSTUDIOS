@@ -4,7 +4,7 @@ A small Express API with MongoDB Atlas connectivity, health checks, and a starte
 
 ## Prerequisites
 
-- Node.js 20 or newer and npm
+- Node.js 20.19 or newer and npm
 - A MongoDB Atlas cluster and database user
 - MongoDB Compass is optional
 
@@ -50,6 +50,32 @@ Production-style start:
 npm start
 ```
 
+## Frontend
+
+The site uses semantic HTML, custom CSS, and vanilla JavaScript, with Vite for local development and production builds. It does not add a frontend framework or animation library.
+
+Start the API in one terminal (this connects to the configured Atlas database):
+
+```sh
+npm run dev
+```
+
+Start the frontend in a second terminal:
+
+```sh
+npm run frontend:dev
+```
+
+Vite serves the site at `http://localhost:5173` and proxies `/api` requests to `http://localhost:3000`. Set `API_PROXY_TARGET` in the Vite process environment if the API listens elsewhere. This setting is a URL, not a secret.
+
+Create a static production build with:
+
+```sh
+npm run frontend:build
+```
+
+The generated site is in `dist/` and can be deployed to a static host. The Express server remains API-only. Project imagery, work, service scope, studio details, and contact destination are marked as placeholders where verified studio content was not available. The contact section does not submit messages.
+
 The server waits for the initial Atlas connection before listening. It defaults to port 3000. `CLIENT_URL` accepts a comma-separated list of allowed browser origins; configure the real frontend origin for deployment. Requests without an `Origin` header (such as curl) are allowed.
 
 ## Health endpoints
@@ -73,7 +99,7 @@ The health route tests do not require a live Atlas database. The actual DB healt
 
 ## Troubleshooting
 
-- **`node` or `npm` not found:** install Node.js 20 or newer and reopen the terminal so PATH updates.
+- **`node` or `npm` not found:** install Node.js 20.19 or newer and reopen the terminal so PATH updates.
 - **`MONGODB_URI is required`:** create the local `.env` and set the URI.
 - **Authentication failed:** rotate the database user password in Atlas, confirm the username, and percent-encode reserved characters in the password portion.
 - **Server selection timeout / DNS error:** check that the cluster is active, the hostname is correct, DNS SRV lookups work, and outbound MongoDB traffic is allowed.
