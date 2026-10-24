@@ -3,10 +3,12 @@ require('dotenv').config();
 const app = require('./app');
 const mongoose = require('mongoose');
 const { connectDatabase } = require('./config/db');
+const { describeMongoError } = require('./config/dbDiagnostics');
 
 const port = Number.parseInt(process.env.PORT || '3000', 10);
 let server;
 let shuttingDown = false;
+let databaseRetry;
 
 async function shutdown(signal) {
   if (shuttingDown) return;
@@ -15,6 +17,7 @@ async function shutdown(signal) {
   if (server) {
     await new Promise((resolve) => server.close(resolve));
   }
+  if (databaseRetry) clearTimeout(databaseRetry);
   try {
     await mongoose.disconnect();
   } catch {
@@ -23,22 +26,24 @@ async function shutdown(signal) {
   }
 }
 
-async function start() {
+async function connectWithRetry() {
+  if (shuttingDown || mongoose.connection.readyState === 1) return;
   try {
     await connectDatabase();
-    server = app.listen(port, '0.0.0.0', () => console.info(`Server listening on port ${port}.`));
   } catch (error) {
-    const message = error.message === 'MONGODB_URI is required. Set it in your local .env file.'
-      ? error.message
-      : error.message.startsWith('MONGODB_URI still contains the example password placeholder.')
-        ? error.message
-      : 'Startup failed: unable to connect to MongoDB. Check the local URI, Atlas Network Access, and database user permissions.';
-    console.error(message);
-    await mongoose.disconnect().catch(() => {});
-    process.exitCode = 1;
+    console.error('MongoDB is unavailable; API health remains available.');
+    console.error('MongoDB diagnostic:', JSON.stringify(describeMongoError(error)));
+    if (!shuttingDown) databaseRetry = setTimeout(() => { void connectWithRetry(); }, 30000);
   }
+}
+
+function start() {
+  server = app.listen(port, '0.0.0.0', () => {
+    console.info(`Server listening on port ${port}.`);
+    void connectWithRetry();
+  });
 }
 
 process.on('SIGINT', () => { void shutdown('SIGINT'); });
 process.on('SIGTERM', () => { void shutdown('SIGTERM'); });
-void start();
+start();

@@ -9,7 +9,7 @@ function errorHandler(err, req, res, next) {
   const message = err.code === 11000 ? 'A record with that value already exists' :
     status === 400 && err.name === 'ValidationError' ? 'Request validation failed' :
     status === 400 && err.name === 'CastError' ? 'Invalid request value' :
-    status === 500 && process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message;
+    status === 500 ? 'Internal server error' : err.message;
   res.status(status).json({
     success: false,
     error: message

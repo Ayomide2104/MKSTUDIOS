@@ -1,4 +1,26 @@
 const mongoose = require('mongoose');
+const { describeMongoError } = require('./dbDiagnostics');
+
+let connectionEventsAttached = false;
+let hasConnected = false;
+
+function attachConnectionEvents(connection) {
+  if (connectionEventsAttached) return;
+  connectionEventsAttached = true;
+
+  connection.on('connected', () => {
+    hasConnected = true;
+    console.info('MongoDB connection established.');
+  });
+  connection.on('error', (error) => {
+    if (hasConnected) {
+      console.error('MongoDB connection event:', JSON.stringify(describeMongoError(error)));
+    }
+  });
+  connection.on('disconnected', () => {
+    if (hasConnected) console.warn('MongoDB connection disconnected.');
+  });
+}
 
 async function connectDatabase() {
   const uri = process.env.MONGODB_URI;
@@ -10,9 +32,7 @@ async function connectDatabase() {
   }
 
   const connection = mongoose.connection;
-  connection.on('connected', () => console.info('MongoDB connection established.'));
-  connection.on('error', () => console.error('MongoDB connection error. Check Atlas credentials, network access, and database permissions.'));
-  connection.on('disconnected', () => console.warn('MongoDB connection disconnected.'));
+  attachConnectionEvents(connection);
 
   await mongoose.connect(uri, { dbName: 'mkstudios', serverSelectionTimeoutMS: 10000 });
   if (connection.readyState !== 1) {

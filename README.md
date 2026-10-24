@@ -1,86 +1,69 @@
-# MK Studios backend
+# MKSTUDIOS
 
-A small Express API with MongoDB Atlas connectivity, health checks, and a starter User model. The existing `index.html` and `css/style.css` remain in place; this API does not expose database credentials to browser code.
+MKSTUDIOS is a private gaming community built on Express, MongoDB Atlas, and a Vite 7 frontend. The current foundation includes a responsive six-section social shell, guest-readable general feed, account sessions, posts and discussion primitives, a curated games catalog, and public game communities.
 
-## Prerequisites
+## Local development
 
-- Node.js 20.19 or newer and npm
-- A MongoDB Atlas cluster and database user
-- MongoDB Compass is optional
+Requirements: Node.js 22.12 or newer (below 25), npm, and a MongoDB database for account and social API operations.
 
-## Install and configure
+Create a local `.env` (never commit it) with the variables needed for the service:
 
-From the project root, install dependencies:
+| Variable | Purpose |
+| --- | --- |
+| `PORT` | Express port; defaults to `3000`. |
+| `NODE_ENV` | Runtime mode; use `development` locally and `production` when deployed. |
+| `MONGODB_URI` | MongoDB Atlas connection URI used by the application and deliberate index migration. |
+| `MONGOMS_SYSTEM_BINARY` | Optional path to a local `mongod` binary for integration tests. |
+| `MONGOMS_ALLOW_DOWNLOAD` | Set to `1` when intentionally downloading MongoDB 7.0.14 for in-memory integration tests. |
+| `CONFIRM_USER_INDEX_MIGRATION` | Set to `yes` only when deliberately applying the reviewed user index migration. |
+| `CLIENT_URL` | Optional comma-separated allowed browser origins. Defaults include local Vite origins. |
+| `RENDER` | Render-provided runtime flag used for secure cookies and same-origin checks. |
+| `FRONTEND_PORT` | Vite dev port; defaults to `5174`. |
+| `API_PROXY_TARGET` | Optional Express URL for the Vite `/api` proxy; defaults to `http://localhost:3000`. |
 
-```sh
-npm install
+Start Express and Vite together:
+
+```powershell
+npm.cmd run dev:all
 ```
 
-The local `.env` file is ignored by Git. Set its values locally:
+Vite is available at `http://127.0.0.1:5174`, with `/api` proxied to Express on port `3000`. The app starts listening even if Atlas is down; `/api/health/db` reports the database state, and the server retries the connection periodically. `GET /api/health` remains available independently of MongoDB.
 
-```dotenv
-PORT=3000
-NODE_ENV=development
-MONGODB_URI=mongodb+srv://<username>:<password>@<cluster-host>/<database>
-CLIENT_URL=http://localhost:5173
+Useful commands:
+
+```powershell
+npm.cmd test
+npm.cmd run frontend:build
+npm.cmd run seed:catalog
 ```
 
-Replace the placeholders with your Atlas database username, password, cluster hostname, and database name. Do not paste secrets into source files, documentation, frontend code, or commits. If a password contains reserved URI characters such as `@`, `:`, `/`, `?`, `#`, or `%`, percent-encode the password portion only. Do not encode the whole URI. `.env.example` is a placeholder and is safe to copy as a template; it is not a working credential.
+The catalog seed is additive and idempotent: it upserts game records by slug and inserts community records that are not already present. It does not remove or reset data. Run it only with the intended `MONGODB_URI` configured.
 
-## Atlas setup
+The user-index migration is deliberately separate from server startup. Review the real Atlas indexes and duplicate counts first with `node scripts/migrateUserIndexes.js --dry-run`. It reports index definitions and aggregate counts only. After reviewing the plan, apply it explicitly with `CONFIRM_USER_INDEX_MIGRATION=yes node scripts/migrateUserIndexes.js --apply` (PowerShell: `$env:CONFIRM_USER_INDEX_MIGRATION='yes'; node scripts/migrateUserIndexes.js --apply`). It creates string-only partial unique indexes before dropping replaced legacy single-field unique indexes, and stops if duplicate strings or an unexpected compound index is found. It does not edit documents or drop collections. User schema auto-indexing is disabled so startup will not perform this migration implicitly.
 
-1. In Atlas Database Access, use a database user with only the permissions required by the application.
-2. Grant that database user only the required read/write access to `mkstudios`.
-3. In Atlas Network Access, allow the development machine’s current public IP. Avoid broad `0.0.0.0/0` access unless you have a deliberate, temporary reason and understand the exposure.
-4. Put the complete replacement URI in the local `.env` as `MONGODB_URI`. The application reads it only from the environment.
+For Atlas, use a database user scoped to the `mkstudios` database and allow the development machine’s current IP in Network Access. On Render, allow the service’s outbound IP ranges. If a database password contains reserved URI characters, percent-encode the password portion of the URI. Keep the URI only in local ignored `.env` and Render’s environment settings.
 
-Atlas connectivity depends on valid credentials, database permissions, an allowed client IP, a running cluster, DNS SRV support, and outbound access to MongoDB. This project does not create collections or seed records on startup. Mongoose may build the declared unique email index when the User model is first used; plan index creation appropriately if deploying against existing data with duplicate emails.
+## Current API and data model
 
-## Run
+- `User`: normalized unique username, bcrypt password hash, public profile fields, genres, and game interests.
+- `Session`: hashed opaque token, private session CSRF token, user reference, expiration and TTL index. Browser session cookie is httpOnly, SameSite strict, and Secure in production/Render.
+- `Game`: unique slug, genres/platforms, description, accent, nullable artwork, aliases and active flag.
+- `Community`: unique slug, linked game, rules, visibility, accent and member count.
+- `Membership`: community/user pair with a unique compound index and owner/moderator/member role.
+- `Post`: one document with a destinations array (`general`, `game`, or `community`), body, reserved media field and counters.
+- `Comment`, `Reaction`, and `Repost`: persisted records with bounded comment reads and unique user/post reaction and repost indexes.
 
-Development with automatic restart:
+Public feed queries only select posts with an explicit `general` destination. Community-only posts use the community destination and are not returned by general feed queries. Community post creation checks membership. The current public API uses bounded pages with opaque ObjectId cursors. User-facing text is rendered with `textContent`.
 
-```sh
-npm run dev
-```
+User indexes are managed explicitly by `scripts/migrateUserIndexes.js`; username is unique only for strings, optional email is unique only for strings, and the `createdAt` lookup index is created if missing. The Atlas dry run performed for this task found a full unique `username_1` index, no email index, and zero user documents/duplicate groups in the selected `mkstudios` collection. The migration has not been applied. Review the dry run and apply it deliberately when ready.
 
-Production-style start:
+The model indexes cover: `User.username` and `User.email` partial unique indexes plus `createdAt`; `Session.tokenHash` unique, `user`, and `expiresAt` TTL; `Game.slug` unique plus active/name and genre/active lookups; `Community.slug` unique plus game/active/name; `Membership.community+user` unique and user/createdAt; `Post.destinations`, author/createdAt; `Comment.post+createdAt+_id`; `Reaction.user+post` unique and post/createdAt; and `Repost.user+post` unique. Existing User indexes are not auto-created on app startup; the deliberate migration handles just the two user uniqueness indexes.
 
-```sh
-npm start
-```
+Health endpoints are `GET /api/health` (process health) and `GET /api/health/db` (MongoDB connection state; returns 503 while disconnected). Unknown `/api/*` routes use the JSON 404 response.
 
-## Frontend
+## Deployment on Render
 
-The site uses semantic HTML, custom CSS, and vanilla JavaScript, with Vite for local development and production builds. Three.js powers the lazy-loaded glass hero scene.
-
-Start the API in one terminal (this connects to the configured Atlas database):
-
-```sh
-npm run dev
-```
-
-Start the frontend in a second terminal:
-
-```sh
-npm run frontend:dev
-```
-
-Vite serves the site at `http://localhost:5173` and proxies `/api` requests to `http://localhost:3000`. Set `API_PROXY_TARGET` in the Vite process environment if the API listens elsewhere. This setting is a URL, not a secret.
-
-Create a production frontend build with:
-
-```sh
-npm run frontend:build
-```
-
-The generated site is in `dist/`. In production, Express serves this build and the API from the same web service. The Vite development server and `/api` proxy remain available for local development. This is a single-page site with anchor navigation, so unknown paths do not receive an HTML fallback. Project imagery, work, service scope, studio details, and contact destination are marked as placeholders where verified studio content was not available. The contact section does not submit messages.
-
-The server waits for the initial Atlas connection before listening. It defaults to port 3000 locally and binds to `0.0.0.0` so hosted platforms can reach it. `CLIENT_URL` accepts a comma-separated list of allowed browser origins. It defaults to the Vite origin in development. For a same-origin production deployment, `CLIENT_URL` is optional; set it only when intentionally allowing a separate frontend origin. Requests without an `Origin` header (such as curl) are allowed.
-
-## Render deployment
-
-Create a Render **Web Service** from the connected GitHub repository and use:
+For the existing single Render Web Service:
 
 ```text
 Build Command: npm install && npm run frontend:build
@@ -88,37 +71,14 @@ Start Command: npm start
 Health Check Path: /api/health
 ```
 
-The Node engine range is `>=22.12.0 <25`, matching Vite 7 and Render's supported current Node 24 runtime. Render supplies `PORT` and `NODE_ENV=production`. Add `MONGODB_URI` in the Render dashboard under **Environment**; enter the Atlas URI directly as an environment variable and never commit it. `CLIENT_URL` is only needed for an intentionally separate browser frontend origin. In Render, open the service, choose **Connect > Outbound**, and add the listed IP ranges in MongoDB Atlas **Network Access**. Avoid allowing all IPs when the service-specific ranges can be used.
+Configure `MONGODB_URI` in Render’s environment settings. `PORT` and `NODE_ENV` are supplied by Render. `CLIENT_URL` is optional for a same-origin deployment and should list exact origins if a separate frontend is used. Atlas Network Access must allow the service’s outbound IPs.
 
-## Health endpoints
+The Express server serves the Vite `dist` build and API from the same service. Text-first profile/feed media fields are placeholders only; uploads are not implemented and no persistent local files are written. Cloudinary or S3-compatible object storage is the recommended future media path.
 
-- `GET http://localhost:3000/api/health` reports API status, timestamp, and environment.
-- `GET http://localhost:3000/api/health/db` reports the actual Mongoose connection state; disconnected state returns HTTP 503.
+Socket.IO, direct messages, and notifications are not implemented in this version. If sockets are added, verify Render WebSocket support and use a shared Socket.IO adapter such as Redis when running multiple instances; durable messages must remain in MongoDB.
 
-## MongoDB Compass
+## Verification and current scope
 
-Compass connects directly to Atlas, while this API connects through Mongoose. In Compass, create a new connection using the same Atlas SRV URI stored in the local `.env`; enter the replacement password in Compass’s credential UI or its local connection configuration, and do not share screenshots or connection files containing credentials. If the API connects but Compass does not, verify Compass’s saved credentials, the Atlas Network Access IP allowlist, and its DNS/network access independently.
+Tests use Node’s built-in test runner and never read `.env`. Social integration tests use an in-memory MongoDB instance named `mkstudios_test`; they skip when no local MongoDB binary is available unless `MONGOMS_ALLOW_DOWNLOAD=1` is set. Other tests cover health/static hosting, username/index contracts, profile serialization, guest blocking, and destination visibility contracts.
 
-## Tests
-
-Run the built-in Node test suite:
-
-```sh
-npm test
-```
-
-The health route tests do not require a live Atlas database. The actual DB health result is only healthy when Mongoose is connected.
-
-## Troubleshooting
-
-- **`node` or `npm` not found:** install Node.js 20.19 or newer and reopen the terminal so PATH updates.
-- **`MONGODB_URI is required`:** create the local `.env` and set the URI.
-- **Authentication failed:** rotate the database user password in Atlas, confirm the username, and percent-encode reserved characters in the password portion.
-- **Server selection timeout / DNS error:** check that the cluster is active, the hostname is correct, DNS SRV lookups work, and outbound MongoDB traffic is allowed.
-- **IP not authorized:** add only the current client IP in Atlas Network Access.
-- **Not authorized:** grant the Atlas database user appropriate access to `mkstudios`.
-- **Duplicate email index failure:** inspect existing data for normalized duplicate email addresses before creating the unique index.
-
-## Security and Git
-
-Never commit `.env` or share its contents. `.gitignore` excludes local environment files, dependencies, logs, build output, and coverage reports. If `.env` was ever committed, rotate its secrets immediately, then remove it from the Git index without deleting the local file using `git rm --cached .env` and commit that removal. Ignore rules do not remove a file already tracked. Keep all database credentials server-side; do not put `MONGODB_URI` into HTML or browser JavaScript.
+The games catalog and community API require the idempotent seed command before lists are populated. The app now has account onboarding, profile/settings, feed interactions and pagination, ranked For You/Interests discovery, scoped community feeds, and game update groups. Friends, direct messages, and notifications remain unimplemented and are outside the authorized phases for this task.

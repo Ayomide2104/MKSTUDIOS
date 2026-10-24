@@ -3,199 +3,67 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#06070a" />
-    <meta name="description" content="MKSTUDIOS — independent creative technology studio. Ideas take form." />
-    <title>MKSTUDIOS — Ideas take form</title>
+    <meta name="theme-color" content="#080a12" />
+    <meta name="description" content="MKSTUDIOS — a private gaming community for the people you play with." />
+    <title>MKSTUDIOS — Play together</title>
     <link rel="stylesheet" href="/css/style.css" />
+    <link rel="stylesheet" href="/css/components.css" />
+    <link rel="stylesheet" href="/css/social.css" />
+    <link rel="stylesheet" href="/css/catalog.css" />
+    <link rel="stylesheet" href="/css/updates.css" />
+    <link rel="stylesheet" href="/css/accents.css" />
+    <link rel="stylesheet" href="/css/lobby.css" />
     <script type="module" src="/js/main.js"></script>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
-
-    <div class="intro" id="intro" aria-hidden="true">
-      <div class="intro__light"></div>
-      <p class="intro__wordmark" aria-hidden="true">MK<span>·</span>STUDIOS</p>
-      <button class="intro__skip" type="button" aria-label="Skip opening sequence">Skip</button>
-    </div>
-
-    <header class="site-header" id="top">
-      <a class="wordmark" href="#top" aria-label="MKSTUDIOS home">
-        <span class="wordmark__symbol" aria-hidden="true">MK<span>·</span></span>
-        <span class="wordmark__name">STUDIOS</span>
-      </a>
-      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="site-nav">
-        <span class="menu-toggle__label">Menu</span>
-        <span class="menu-toggle__icon" aria-hidden="true"><i></i><i></i></span>
-      </button>
-      <nav class="site-nav" id="site-nav" aria-label="Main navigation">
-        <p class="site-nav__eyebrow">Independent by nature <span>—</span> digital by design</p>
-        <a href="#work">Selected work <span>01</span></a>
-        <a href="#services">Capabilities <span>02</span></a>
-        <a href="#studio">Studio <span>03</span></a>
-        <a href="#contact">Start a conversation <span>04</span></a>
-        <p class="site-nav__foot">Ideas take form here.</p>
-      </nav>
+    <div class="ambient ambient--violet" aria-hidden="true"></div><div class="ambient ambient--cyan" aria-hidden="true"></div>
+    <header class="topbar">
+      <a class="brand" href="#feed" aria-label="MKSTUDIOS home"><span class="brand__mark">M<span>K</span></span><span class="brand__name">MKSTUDIOS</span></a>
+      <div class="topbar__right"><span class="privacy"><span></span> PRIVATE BETA</span><button class="icon-button" id="auth-open" type="button" aria-label="Sign in" title="Sign in"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5 8 8 0 0 1-3.4-.75L4 20l1.75-4.2A7.5 7.5 0 1 1 20 11.5Z"/><path d="M8.5 12h.01M12.5 12h.01M16.5 12h.01"/></svg></button></div>
     </header>
-
-    <main id="main">
-      <section class="hero" aria-labelledby="hero-title">
-        <canvas class="hero__scene" id="glass-scene" aria-hidden="true"></canvas>
-        <div class="hero__environment" aria-hidden="true">
-          <div class="hero__halo"></div>
-          <div class="hero__sculpture">
-            <div class="hero__sculpture-core"></div>
-            <div class="hero__sculpture-rim"></div>
-            <div class="hero__sculpture-glint"></div>
-          </div>
-          <div class="hero__horizon"></div>
-          <div class="hero__grain"></div>
-        </div>
-        <div class="hero__topline">
-          <p class="eyebrow"><span class="eyebrow__signal"></span> Independent creative studio</p>
-          <p class="hero__edition">A digital atelier <span>—</span> Ideas take form</p>
-        </div>
-        <div class="hero__composition">
-          <div class="hero__title-wrap">
-            <p class="hero__overline">Form follows feeling</p>
-            <h1 class="hero__title" id="hero-title"><span>Ideas</span><span>take <i>form.</i></span></h1>
-          </div>
-          <div class="hero__aside">
-            <p>Strategy, design and technology shaped into distinctive digital experiences.</p>
-            <a class="text-link magnetic" href="#work">Explore selected work <span aria-hidden="true">↘</span></a>
-          </div>
-        </div>
-        <div class="hero__base">
-          <p>Design / Technology / Experience</p>
-          <a class="scroll-cue" href="#work"><span class="scroll-cue__line"></span> Scroll to explore</a>
-          <p class="hero__index">01 <span>—</span> 05</p>
-        </div>
-      </section>
-
-      <section class="work section-shell" id="work" aria-labelledby="work-title">
-        <header class="section-heading reveal">
-          <div>
-            <p class="eyebrow"><span class="section-index">01</span> Selected work</p>
-            <h2 class="section-title" id="work-title">Ideas in <i>form.</i></h2>
-          </div>
-          <p class="section-note">Concept studies <span>—</span> placeholder work until studio projects are supplied.</p>
-        </header>
-
-        <div class="work-gallery">
-          <article class="project project--lead reveal">
-            <div class="project__art project__art--form" data-art="form" aria-hidden="true">
-              <div class="form-object">
-                <span class="form-object__loop"></span><span class="form-object__facet"></span><span class="form-object__spark"></span>
-              </div>
-              <p class="art-label">FORM STUDY <span>01</span></p>
-              <span class="art-coordinate">Material / Study 01</span>
-            </div>
-            <div class="project__caption">
-              <div><p class="eyebrow">Concept study 01</p><h3>Quiet geometry</h3></div>
-              <p>Digital experience <span>·</span> Art direction</p>
-            </div>
-          </article>
-
-          <article class="project project--offset reveal">
-            <div class="project__art project__art--nocturne" data-art="nocturne" aria-hidden="true">
-              <div class="nocturne-object"><span></span><i></i></div>
-              <p class="art-label">LIGHT STUDY <span>02</span></p>
-              <span class="art-coordinate">Light / Study 02</span>
-            </div>
-            <div class="project__caption">
-              <div><p class="eyebrow">Concept study 02</p><h3>After the light</h3></div>
-              <p>Creative technology <span>·</span> Motion</p>
-            </div>
-          </article>
+    <main id="main" class="app-layout">
+      <aside class="side-rail glass-panel" aria-label="Primary navigation">
+        <nav class="nav-dock" role="tablist" aria-label="Sections">
+          <button class="nav-item is-active" type="button" role="tab" aria-selected="true" aria-controls="view-feed" data-view="feed" aria-label="Feed" title="Feed"><svg viewBox="0 0 24 24"><path d="M4 5.5h16M4 11.5h16M4 17.5h10"/></svg></button>
+          <button class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="view-games" data-view="games" aria-label="Games" title="Games"><svg viewBox="0 0 24 24"><path d="M7 8h10a4 4 0 0 1 3.8 5.2l-1 3.2a2.3 2.3 0 0 1-3.8 1l-2-2H10l-2 2a2.3 2.3 0 0 1-3.8-1l-1-3.2A4 4 0 0 1 7 8Z"/><path d="M8 11v4m-2-2h4m6-1h.01m2 2h.01"/></svg></button>
+          <button class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="view-updates" data-view="updates" aria-label="Game updates" title="Game updates"><svg viewBox="0 0 24 24"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1m-8.6 8.6-2.1 2.1"/><circle cx="12" cy="12" r="5"/></svg></button>
+          <button class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="view-groups" data-view="groups" aria-label="Groups" title="Groups"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0m1-4a4.5 4.5 0 0 1 5 4"/></svg></button>
+          <button class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="view-friends" data-view="friends" aria-label="Friends" title="Friends"><svg viewBox="0 0 24 24"><path d="M16 20v-1.5a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4V20"/><circle cx="9.5" cy="7" r="4"/><path d="M17 11a4 4 0 0 0 0-8m4 17v-1.5a4 4 0 0 0-3-3.87"/></svg></button>
+          <button class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="view-profile" data-view="profile" aria-label="Profile" title="Profile"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></svg></button>
+        </nav>
+        <div class="rail-bottom"><span class="rail-orb" aria-hidden="true">✦</span><span class="rail-caption">YOUR<br />SQUAD, ONLINE</span></div>
+      </aside>
+      <section class="workspace" id="view-feed" role="tabpanel" aria-label="Feed" data-panel="feed">
+        <div class="page-heading"><div><p class="eyebrow"><span class="live-dot"></span> YOUR GAMING CIRCLE</p><h1>Feed<span class="heading-period">.</span></h1><p class="subheading">The good stuff from your people.</p></div><button class="avatar avatar--self" id="auth-avatar" type="button" aria-label="Sign in to your profile">?</button></div>
+        <section class="lobby-hero" aria-label="Your gaming lobby">
+          <div class="lobby-hero__copy"><p class="eyebrow"><span class="live-dot"></span> THE LOBBY IS OPEN</p><h2>Good games.<br /><span>Better company.</span></h2><p>Find your people, trade highlights, and make the next session one to remember.</p><button class="button button--primary" type="button" data-action="compose">Share a moment <span>↗</span></button></div>
+          <div class="lobby-hero__scene" aria-hidden="true"><div class="scene-orbit scene-orbit--one"></div><div class="scene-orbit scene-orbit--two"></div><div class="scene-core"><span>MK</span></div><span class="scene-spark scene-spark--one">✦</span><span class="scene-spark scene-spark--two">✧</span><span class="scene-caption">PLAY<br />TOGETHER</span></div>
+          <div class="lobby-hero__foot"><span><i></i> YOUR PRIVATE GAMING SPACE</span><span>BUILT FOR YOUR SQUAD</span></div>
+        </section>
+        <div class="feed-grid">
+          <section class="feed-main" aria-label="Community feed">
+            <div class="feed-tabs glass-panel" role="tablist" aria-label="Feed filter"><button class="feed-tab is-selected" type="button" role="tab" aria-selected="true" data-filter="for-you">For you</button><button class="feed-tab" type="button" role="tab" aria-selected="false" data-filter="friends">Friends</button><button class="feed-tab" type="button" role="tab" aria-selected="false" data-filter="interests">Interests</button><span class="tab-indicator" aria-hidden="true"></span></div>
+            <button class="composer glass-panel" type="button" data-action="compose"><span class="avatar avatar--composer">?</span><span class="composer__placeholder">What are you playing lately?</span><span class="composer__plus" aria-hidden="true">＋</span></button>
+            <div class="feed-state glass-panel" id="feed-state"><span class="state-icon">✳</span><h2>Your circle starts here</h2><p>Sign in to meet your squad and share what you’re playing. Public posts will show here as the community grows.</p><button class="button button--primary" type="button" data-action="signin">Join the circle <span>↗</span></button></div>
+            <div class="post-list" id="post-list" aria-live="polite"></div>
+          </section>
+          <aside class="sidebar">
+            <section class="welcome-card glass-panel"><div class="welcome-card__glow"></div><p class="eyebrow">A SMALL WORLD, A BIG GAME</p><h2>Better together.</h2><p>MKSTUDIOS is your private corner of the internet to find your people and get in the game.</p><button class="text-button" type="button" data-action="signin">Get started <span>→</span></button><div class="welcome-card__symbol" aria-hidden="true">M<span>K</span></div></section>
+            <section class="mini-panel glass-panel"><div class="mini-panel__head"><h2>Now playing</h2><span class="mini-label">YOUR GAMES</span></div><div class="empty-mini"><span class="empty-mini__glyph">⌘</span><p>Your game interests will live here.</p><button type="button" data-view-link="games">Explore games <span>→</span></button></div></section>
+            <p class="sidebar-foot">Made for the ones you play with <span>✦</span></p>
+          </aside>
         </div>
       </section>
-
-      <section class="capabilities" id="services" aria-labelledby="services-title">
-        <div class="section-shell capabilities__inner">
-          <header class="section-heading reveal">
-            <div>
-              <p class="eyebrow"><span class="section-index">02</span> Capabilities</p>
-              <h2 class="section-title" id="services-title">A practice of <i>possibility.</i></h2>
-            </div>
-            <p class="section-note">Potential service areas <span>—</span> confirm final studio offering before launch.</p>
-          </header>
-          <div class="capability-field">
-            <article class="capability capability--direction reveal">
-              <span class="capability__number">01 / 04</span>
-              <div class="capability__object capability__object--orbit" aria-hidden="true"><i></i><i></i><b></b></div>
-              <div class="capability__copy"><h3>Digital design <span>&amp; UI/UX</span></h3><p>Interfaces with feeling, clarity and intention.</p></div>
-            </article>
-            <article class="capability capability--engineering reveal">
-              <span class="capability__number">02 / 04</span>
-              <div class="capability__object capability__object--prism" aria-hidden="true"><i></i><b></b></div>
-              <div class="capability__copy"><h3>Web development <span>&amp; engineering</span></h3><p>Digital foundations made considered and enduring.</p></div>
-            </article>
-            <article class="capability capability--technology reveal">
-              <span class="capability__number">03 / 04</span>
-              <div class="capability__object capability__object--field" aria-hidden="true"><i></i><i></i><b></b></div>
-              <div class="capability__copy"><h3>Creative technology <span>&amp; prototyping</span></h3><p>New forms of interaction, explored through making.</p></div>
-            </article>
-            <article class="capability capability--motion reveal">
-              <span class="capability__number">04 / 04</span>
-              <div class="capability__object capability__object--ribbon" aria-hidden="true"><i></i><i></i><b></b></div>
-              <div class="capability__copy"><h3>Motion <span>&amp; interaction</span></h3><p>Movement that gives a digital experience its rhythm.</p></div>
-            </article>
-          </div>
-        </div>
-      </section>
-
-      <section class="process section-shell" aria-labelledby="process-title">
-        <header class="section-heading reveal">
-          <div>
-            <p class="eyebrow"><span class="section-index">03</span> The process</p>
-            <h2 class="section-title" id="process-title">From first thought<br />to <i>final form.</i></h2>
-          </div>
-          <p class="section-note">A clear path from ambition to a considered digital experience.</p>
-        </header>
-        <ol class="process-line">
-          <li class="reveal"><span class="process-line__number">01</span><span class="process-line__dot"></span><h3>Discover</h3><p>Understand the ambition, audience and opportunity.</p></li>
-          <li class="reveal"><span class="process-line__number">02</span><span class="process-line__dot"></span><h3>Design</h3><p>Shape the direction, clarify the story and define the experience.</p></li>
-          <li class="reveal"><span class="process-line__number">03</span><span class="process-line__dot"></span><h3>Engineer</h3><p>Bring form, detail and function together with care.</p></li>
-          <li class="reveal"><span class="process-line__number">04</span><span class="process-line__dot"></span><h3>Deliver</h3><p>Refine the details and prepare the experience for what comes next.</p></li>
-        </ol>
-      </section>
-
-      <section class="studio" id="studio" aria-labelledby="studio-title">
-        <div class="studio__atmosphere" aria-hidden="true"><span></span><i></i></div>
-        <div class="section-shell studio__inner">
-          <p class="eyebrow reveal"><span class="section-index">04</span> Studio point of view</p>
-          <div class="studio__composition reveal">
-            <h2 id="studio-title">Technology gives ideas <i>their shape.</i></h2>
-            <div class="studio__aside">
-              <span class="studio__mark" aria-hidden="true">M<span>K</span></span>
-              <p>We bring strategy, design and engineering into one considered practice—making digital work with clarity, character and a point of view.</p>
-              <p class="placeholder-note">Studio story placeholder <span>—</span> add verified studio details when available.</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="contact" id="contact" aria-labelledby="contact-title">
-        <div class="contact__horizon" aria-hidden="true"><span></span><i></i></div>
-        <div class="section-shell contact__inner">
-          <p class="eyebrow reveal"><span class="section-index">05</span> The next step</p>
-          <h2 class="reveal" id="contact-title">Have a vision?<br /><i>Let’s give it form.</i></h2>
-          <div class="contact__bottom reveal">
-            <p>Tell us what you’re imagining. We’ll bring the right questions, creative thinking and technical perspective.</p>
-            <p class="placeholder-note">Contact details placeholder <span>—</span> a verified studio email or enquiry destination is needed before launch.</p>
-            <p class="contact__destination">Project enquiries <span aria-hidden="true">↗</span><small>Contact channel to be supplied</small></p>
-          </div>
-          <div class="contact__rule" aria-hidden="true"></div>
-        </div>
-      </section>
+      <section class="workspace secondary-view" id="view-games" role="tabpanel" aria-label="Games" data-panel="games" hidden><div class="page-heading"><div><p class="eyebrow eyebrow--cyan">YOUR NEXT MAIN</p><h1>Games<span class="heading-period">.</span></h1><p class="subheading">Find your next obsession.</p></div></div><div class="section-placeholder glass-panel"><span class="placeholder-art">⌘</span><h2>Choose your games</h2><p>Sign in to save your favorites and tune your feed to what you play.</p><button class="button button--primary" type="button" data-action="signin">Sign in to explore <span>↗</span></button></div></section>
+      <section class="workspace secondary-view" id="view-updates" role="tabpanel" aria-label="Game updates" data-panel="updates" hidden><div class="page-heading"><div><p class="eyebrow eyebrow--amber">PATCH NOTES & PLAYER TAKES</p><h1>Game updates<span class="heading-period">.</span></h1><p class="subheading">What’s new in your worlds.</p></div></div><div class="section-placeholder glass-panel"><span class="placeholder-art placeholder-art--amber">✺</span><h2>Fresh drops, together</h2><p>Follow games to see their updates and the conversations around them.</p><button class="button button--primary" type="button" data-action="signin">Sign in to follow games <span>↗</span></button></div></section>
+      <section class="workspace secondary-view" id="view-groups" role="tabpanel" aria-label="Groups" data-panel="groups" hidden><div class="page-heading"><div><p class="eyebrow eyebrow--green">YOUR PEOPLE, YOUR LOBBY</p><h1>Groups<span class="heading-period">.</span></h1><p class="subheading">Find your people by what you play.</p></div></div><div class="section-placeholder glass-panel"><span class="placeholder-art placeholder-art--green">◎</span><h2>Pull up a chair</h2><p>Game communities are where plans turn into sessions.</p><button class="button button--primary" type="button" data-action="signin">Sign in to discover groups <span>↗</span></button></div></section>
+      <section class="workspace secondary-view" id="view-friends" role="tabpanel" aria-label="Friends" data-panel="friends" hidden><div class="page-heading"><div><p class="eyebrow eyebrow--pink">YOUR PLAYER TWO (AND THREE)</p><h1>Friends<span class="heading-period">.</span></h1><p class="subheading">Good games are better shared.</p></div></div><div class="section-placeholder glass-panel"><span class="placeholder-art placeholder-art--pink">♡</span><h2>Your squad is waiting</h2><p>Add friends, share game nights, and keep the conversation going.</p><button class="button button--primary" type="button" data-action="signin">Sign in to find friends <span>↗</span></button></div></section>
+      <section class="workspace secondary-view" id="view-profile" role="tabpanel" aria-label="Profile" data-panel="profile" hidden><div class="page-heading"><div><p class="eyebrow">YOUR PLAYER CARD</p><h1>Profile<span class="heading-period">.</span></h1><p class="subheading">A little about your side of the screen.</p></div></div><div class="section-placeholder glass-panel"><span class="placeholder-art">◉</span><h2>Make it yours</h2><p>Your favorite games, your vibe, your profile.</p><button class="button button--primary" type="button" data-action="signin">Sign in to set up <span>↗</span></button></div></section>
     </main>
-
-    <footer class="site-footer section-shell">
-      <a class="wordmark wordmark--footer" href="#top" aria-label="MKSTUDIOS, return to top">
-        <span class="wordmark__symbol" aria-hidden="true">MK<span>·</span></span><span class="wordmark__name">STUDIOS</span>
-      </a>
-      <p class="site-footer__note">Independent thinking. Considered execution.</p>
-      <p class="site-footer__copyright">© <span id="copyright-year">2026</span> MKSTUDIOS <span>/</span> All rights reserved</p>
-      <a class="back-to-top" href="#top">Back to top <span aria-hidden="true">↑</span></a>
-    </footer>
+    <nav class="mobile-dock glass-panel" role="tablist" aria-label="Sections"><button class="nav-item is-active" type="button" role="tab" aria-selected="true" data-view="feed" aria-label="Feed"><svg viewBox="0 0 24 24"><path d="M4 5.5h16M4 11.5h16M4 17.5h10"/></svg></button><button class="nav-item" type="button" role="tab" aria-selected="false" data-view="games" aria-label="Games"><svg viewBox="0 0 24 24"><path d="M7 8h10a4 4 0 0 1 3.8 5.2l-1 3.2a2.3 2.3 0 0 1-3.8 1l-2-2H10l-2 2a2.3 2.3 0 0 1-3.8-1l-1-3.2A4 4 0 0 1 7 8Z"/><path d="M8 11v4m-2-2h4m6-1h.01m2 2h.01"/></svg></button><button class="nav-item" type="button" role="tab" aria-selected="false" data-view="updates" aria-label="Game updates"><svg viewBox="0 0 24 24"><path d="M12 3v3m0 12v3M3 12h3m12 0h3"/><circle cx="12" cy="12" r="5"/></svg></button><button class="nav-item" type="button" role="tab" aria-selected="false" data-view="groups" aria-label="Groups"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0m1-4a4.5 4.5 0 0 1 5 4"/></svg></button><button class="nav-item" type="button" role="tab" aria-selected="false" data-view="friends" aria-label="Friends"><svg viewBox="0 0 24 24"><path d="M16 20v-1.5a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4V20"/><circle cx="9.5" cy="7" r="4"/><path d="M17 11a4 4 0 0 0 0-8m4 17v-1.5a4 4 0 0 0-3-3.87"/></svg></button><button class="nav-item" type="button" role="tab" aria-selected="false" data-view="profile" aria-label="Profile"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></svg></button></nav>
+    <dialog class="auth-dialog glass-panel" id="composer-dialog" aria-labelledby="composer-title"><button class="dialog-close" type="button" aria-label="Close composer">×</button><p class="eyebrow">SAY SOMETHING</p><h2 id="composer-title">What’s the play?</h2><form id="composer-form"><label class="sr-only" for="composer-body">Post text</label><textarea id="composer-body" name="body" maxlength="500" required placeholder="Share the highlight, the hard carry, or the late-night plan…"></textarea><div class="composer-footer"><span id="composer-count">0 / 500</span><button class="button button--primary" type="submit">Post <span>↗</span></button></div><div class="auth-error" id="composer-error" role="status"></div></form></dialog>
+    <dialog class="auth-dialog glass-panel" id="auth-dialog" aria-labelledby="auth-title"><button class="dialog-close" type="button" aria-label="Close sign in dialog">×</button><div class="dialog-mark">M<span>K</span></div><p class="eyebrow">YOUR PEOPLE ARE HERE</p><h2 id="auth-title">Get in the game.</h2><p class="dialog-copy">Sign in or create your private gaming profile.</p><div class="auth-switch" role="tablist" aria-label="Account action"><button type="button" class="auth-switch__button is-current" data-auth-mode="login" role="tab" aria-selected="true">Sign in</button><button type="button" class="auth-switch__button" data-auth-mode="register" role="tab" aria-selected="false">Create account</button></div><form id="auth-form"><label for="auth-username">Username</label><input id="auth-username" name="username" autocomplete="username" required minlength="3" maxlength="24" pattern="[A-Za-z0-9_]+" placeholder="your_gamertag" /><label for="auth-password">Password</label><input id="auth-password" name="password" type="password" autocomplete="current-password" required minlength="10" placeholder="At least 10 characters" /><div class="auth-error" id="auth-error" role="status"></div><button class="button button--primary button--wide" type="submit">Continue <span>↗</span></button></form><p class="dialog-note">Private by design. No email required.</p></dialog>
+    <div class="toast-region" aria-live="polite" aria-atomic="true"></div>
   </body>
 </html>
