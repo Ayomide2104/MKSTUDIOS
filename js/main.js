@@ -10,6 +10,19 @@ let destinationChoicesLoaded = false;
 let csrfToken = null;
 let selectedCommunity = null;
 
+function applyTheme(theme, persist = true) {
+  const selected = theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = selected;
+  const themeColor = document.querySelector('meta[name="theme-color"]');
+  if (themeColor) themeColor.content = selected === 'dark' ? '#14171F' : '#5A3FD6';
+  if (persist) {
+    try { localStorage.setItem('mkstudios-theme', selected); } catch { /* Theme still applies for this page view. */ }
+  }
+}
+
+try { applyTheme(localStorage.getItem('mkstudios-theme') || 'light', false); }
+catch { applyTheme('light', false); }
+
 function toast(message) {
   const node = document.createElement('div');
   node.className = 'toast';
@@ -27,11 +40,14 @@ function openAuth(action = null) {
 function selectView(view) {
   $$('[data-panel]').forEach((panel) => { panel.hidden = panel.dataset.panel !== view; });
   $$('[data-view]').forEach((button) => {
-    const active = button.dataset.view === view;
+    const active = button.dataset.view === view || (view === 'groups' && button.dataset.view === 'games' && button.closest('.mobile-dock'));
     button.classList.toggle('is-active', active);
     button.setAttribute('aria-selected', String(active));
     button.tabIndex = active ? 0 : -1;
   });
+  const mobileIndex = { feed: 0, games: 1, groups: 1, friends: 3, profile: 4 }[view];
+  if (mobileIndex !== undefined) $('.mobile-dock')?.style.setProperty('--active-index', String(mobileIndex));
+  $$('.games-switch button').forEach((button) => { const active = button.dataset.viewLink === view; button.classList.toggle('is-current', active); button.setAttribute('aria-selected', String(active)); });
   document.querySelector('.workspace:not([hidden])')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   if (view === 'games') loadGames();
   if (view === 'groups') loadCommunities();
@@ -42,20 +58,45 @@ function selectView(view) {
 $$('[data-view]').forEach((button) => button.addEventListener('click', () => selectView(button.dataset.view)));
 $$('[data-view-link]').forEach((button) => button.addEventListener('click', () => selectView(button.dataset.viewLink)));
 
+const searchToggle = $('#mobile-search-toggle');
+searchToggle.addEventListener('click', () => {
+  const expanded = searchToggle.getAttribute('aria-expanded') === 'true';
+  searchToggle.setAttribute('aria-expanded', String(!expanded)); searchToggle.setAttribute('aria-label', expanded ? 'Open search' : 'Close search');
+  $('.topbar').classList.toggle('search-open', !expanded);
+  if (!expanded) $('#global-search').focus();
+});
+$('#global-search').addEventListener('keydown', (event) => { if (event.key === 'Escape') { $('.topbar').classList.remove('search-open'); searchToggle.setAttribute('aria-expanded', 'false'); searchToggle.focus(); } });
+
+let lastScrollY = window.scrollY;
+let dockScrollScheduled = false;
+window.addEventListener('scroll', () => {
+  if (dockScrollScheduled) return;
+  dockScrollScheduled = true;
+  window.requestAnimationFrame(() => {
+    const dock = $('.mobile-dock'); const current = window.scrollY; const atEnd = window.innerHeight + current >= document.documentElement.scrollHeight - 4;
+    if (window.innerWidth < 900) dock.classList.toggle('is-hidden', !atEnd && current > lastScrollY && current > 80);
+    else dock.classList.remove('is-hidden');
+    lastScrollY = current; dockScrollScheduled = false;
+  });
+}, { passive: true });
+
 $$('.feed-tab').forEach((tab, index) => {
   tab.addEventListener('click', () => {
     if (tab.dataset.filter === 'friends') { toast('Friends feed will unlock with friend connections.'); return; }
+    if (tab.dataset.filter === 'groups') { toast('Group posts are not available in the feed API yet.'); return; }
     $$('.feed-tab').forEach((item) => {
       const active = item === tab;
       item.classList.toggle('is-selected', active);
       item.setAttribute('aria-selected', String(active));
     });
-    $('.tab-indicator').style.transform = `translateX(${index * 102}px)`;
+    const tabs = tab.parentElement;
+    $('.tab-indicator', tabs).style.transform = `translateX(${tab.offsetLeft - tabs.offsetLeft}px)`;
     loadFeed(tab.dataset.filter);
   });
 });
 
 $$('[data-action="signin"], #auth-avatar').forEach((button) => button.addEventListener('click', () => {
+  if (button.id === 'auth-avatar' && currentUser) { selectView('profile'); return; }
   if (button.hasAttribute('data-action') && currentUser) {
     const panel = button.closest('[data-panel]');
     const destination = panel?.dataset.panel || 'games';
@@ -69,13 +110,39 @@ $('#auth-open').addEventListener('click', async () => {
   try { await api('/auth/logout', { method: 'POST' }); } catch { /* The local session is still cleared. */ }
   currentUser = null; csrfToken = null; updateSignedInUI(); toast('You’re signed out.');
 });
-$$('[data-action="compose"]').forEach((button) => button.addEventListener('click', () => currentUser ? composePost() : openAuth('compose')));
+$$('[data-action="compose"]').forEach((button) => button.addEventListener('click', () => { if (!currentUser) return openAuth('compose'); composePost(); if (button.textContent.trim() === 'Photo') photoInput.click(); }));
 
 $('.dialog-close').addEventListener('click', () => dialog.close());
 dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
 $('.dialog-close', composerDialog).addEventListener('click', () => composerDialog.close());
 composerDialog.addEventListener('click', (event) => { if (event.target === composerDialog) composerDialog.close(); });
 $('#composer-body').addEventListener('input', (event) => { $('#composer-count').textContent = `${event.target.value.length} / 500`; });
+const photoInput = $('#composer-photo');
+$('#photo-pick').addEventListener('click', () => photoInput.click());
+let photoUrl = null;
+photoInput.addEventListener('change', async () => {
+  const file = photoInput.files?.[0];
+  if (!file) return;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, 1280 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas'); canvas.width = Math.round(bitmap.width * scale); canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height); bitmap.close();
+    let quality = 0.86; let blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', quality));
+    while (blob && blob.size > 250 * 1024 && quality > 0.35) { quality -= 0.08; blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', quality)); }
+    if (!blob || blob.size > 250 * 1024) throw new Error('This image could not be compressed below 250 KB.');
+    if (photoUrl) URL.revokeObjectURL(photoUrl);
+    photoUrl = URL.createObjectURL(blob);
+    const preview = $('#photo-preview'); preview.hidden = false; preview.replaceChildren();
+    const img = document.createElement('img'); img.src = photoUrl; img.alt = 'Selected photo preview';
+    const info = document.createElement('span'); info.textContent = `${Math.max(1, Math.round(blob.size / 1024))} KB of 300 KB limit`;
+    const meter = document.createElement('progress'); meter.className = 'photo-meter'; meter.max = 300; meter.value = blob.size / 1024; meter.setAttribute('aria-label', 'Compressed photo size out of 300 KB');
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'icon-button'; remove.setAttribute('aria-label', 'Remove selected photo'); remove.textContent = '×';
+    remove.addEventListener('click', () => { URL.revokeObjectURL(photoUrl); photoUrl = null; photoInput.value = ''; preview.hidden = true; preview.replaceChildren(); });
+    preview.append(img, info, meter, remove);
+  } catch (error) { toast(error.message || 'Could not read that image.'); photoInput.value = ''; }
+});
+$('#composer-game').addEventListener('click', () => { composePost(); $('#composer-destination')?.focus(); });
 $('#composer-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const body = $('#composer-body').value.trim();
@@ -130,7 +197,7 @@ async function api(path, options = {}) {
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error || 'Something went wrong. Please try again.');
-  return body.data;
+  return body.data ?? body;
 }
 
 authForm.addEventListener('submit', async (event) => {
@@ -161,7 +228,10 @@ authForm.addEventListener('submit', async (event) => {
       if (pending.type === 'like' || pending.type === 'repost') {
         try { await api(`/posts/${pending.id}/${pending.type}`, { method: 'POST' }); toast(pending.type === 'like' ? 'Post liked.' : 'Post reposted.'); await loadFeed(); }
         catch (error) { toast(error.message); }
-      } else if (pending.type === 'comment') toast('Open the post discussion to add your reply.');
+      } else if (pending.type === 'comment') {
+        try { const detail = await api(`/posts/${pending.id}`); openComments(detail.post, null); }
+        catch (error) { toast(error.message); }
+      }
       else if (pending.type === 'game-interest') {
         try { await api(`/games/${pending.slug}/interest`, { method:'PUT',body:JSON.stringify({ interested:true }) }); currentUser.favoriteGames=[...new Set([...(currentUser.favoriteGames||[]),pending.slug])]; toast('Game added to your interests.'); loadGames(); }
         catch(error) { toast(error.message); }
@@ -175,7 +245,7 @@ authForm.addEventListener('submit', async (event) => {
     $('#auth-error').textContent = error.message;
   } finally {
     submit.disabled = false;
-    submit.innerHTML = 'Continue <span>↗</span>';
+    submit.innerHTML = 'Continue';
   }
 });
 
@@ -184,6 +254,7 @@ function updateSignedInUI() {
   $('#auth-open').title = currentUser ? 'Sign out' : 'Sign in';
   $('#auth-avatar').textContent = currentUser?.displayName?.[0]?.toUpperCase() || currentUser?.username?.[0]?.toUpperCase() || '?';
   $('#auth-avatar').setAttribute('aria-label', currentUser ? `Signed in as ${currentUser.username}` : 'Sign in to your profile');
+  if ($('#comments-form')) { $('#comments-form').hidden = !currentUser; $('#comments-signin').hidden = Boolean(currentUser); }
   $('.avatar--composer').textContent = currentUser?.username?.[0]?.toUpperCase() || '?';
   $$('[data-action="signin"]').forEach((button) => {
     if (!button.dataset.originalLabel) button.dataset.originalLabel = button.textContent;
@@ -210,7 +281,7 @@ async function restoreSession() {
     currentUser = result.user;
     csrfToken = result.csrfToken;
     updateSignedInUI();
-    if (!currentUser.onboardingComplete) startOnboarding();
+    if (currentUser && !currentUser.onboardingComplete) startOnboarding();
   } catch {
     // A guest can read public posts; an expired cookie simply leaves the guest view.
   }
@@ -223,7 +294,7 @@ async function loadFeed(filter = activeFeed, cursor = null) {
   const state = $('#feed-state');
   const list = $('#post-list');
   activeFeed = filter;
-  if (!cursor) { feedCursor = null; state.hidden = false; state.innerHTML = '<span class="state-icon" aria-hidden="true">◌</span><h2>Finding your people…</h2><p>Loading the latest conversations.</p>'; list.replaceChildren(); }
+  if (!cursor) { feedCursor = null; state.hidden = false; state.innerHTML = '<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-posts.svg" alt=""/><h2>Finding your people…</h2><p>Loading the latest conversations.</p>'; list.replaceChildren(); }
   let more = $('#feed-load-more');
   if (!more) { more = document.createElement('button'); more.id = 'feed-load-more'; more.className = 'button'; more.type = 'button'; more.textContent = 'Load more'; more.addEventListener('click', () => loadFeed(activeFeed, feedCursor)); list.after(more); }
   more.hidden = true;
@@ -233,76 +304,243 @@ async function loadFeed(filter = activeFeed, cursor = null) {
     feedCursor = result.nextCursor;
     more.hidden = !feedCursor; more.disabled = false;
     if (!result.items?.length && !cursor && result.unavailable) {
-      state.innerHTML = '<span class="state-icon" aria-hidden="true">♧</span><h2>Friends feed is coming later</h2><p>Friend connections are part of the next approved phase.</p>';
+      state.innerHTML = '<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-posts.svg" alt=""/><h2>Friends feed is coming later</h2><p>Friend connections are part of the next approved phase.</p>';
       return;
     }
     if (!result.items?.length && !cursor) {
-      state.innerHTML = '<span class="state-icon" aria-hidden="true">✳</span><h2>Your circle starts here</h2><p>There are no public posts yet. Start a conversation when you’re ready.</p>';
+      state.innerHTML = '<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-posts.svg" alt=""/><h2>Your circle starts here</h2><p>There are no public posts yet. Start a conversation when you’re ready.</p>';
       if (currentUser) {
         const button = document.createElement('button');
         button.className = 'button button--primary'; button.type = 'button'; button.textContent = 'Write a post'; button.addEventListener('click', composePost);
         state.append(button);
       } else {
-        const button = document.createElement('button'); button.className = 'button button--primary'; button.type = 'button'; button.textContent = 'Join the circle ↗'; button.addEventListener('click', () => openAuth()); state.append(button);
+        const button = document.createElement('button'); button.className = 'button button--primary'; button.type = 'button'; button.textContent = 'Join the circle'; button.addEventListener('click', () => openAuth()); state.append(button);
       }
     } else state.hidden = list.children.length > 0;
   } catch {
-    state.innerHTML = '<span class="state-icon" aria-hidden="true">↻</span><h2>Couldn’t load the feed</h2><p>Check your connection and try again.</p>';
+    state.innerHTML = '<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-posts.svg" alt=""/><h2>Couldn’t load the feed</h2><p>Check your connection and try again.</p>';
     const retry = document.createElement('button'); retry.className = 'button button--primary'; retry.type = 'button'; retry.textContent = 'Try again'; retry.addEventListener('click', () => loadFeed(filter, cursor)); state.append(retry);
   }
 }
 
-function renderPost(post) {
-  const article = document.createElement('article'); article.className = 'post-card glass-panel';
-  const header = document.createElement('div'); header.className = 'post-card__head';
-  const avatar = document.createElement('span'); avatar.className = 'avatar post-avatar'; avatar.textContent = (post.author?.displayName || post.author?.username || '?')[0].toUpperCase();
-  if(post.author?.avatar)avatar.classList.add(post.author.avatar);
-  const meta = document.createElement('div'); meta.className = 'post-meta';
-  const name = document.createElement('strong'); name.textContent = post.author?.displayName || post.author?.username || 'Player';
-  name.tabIndex=0;name.role='link';name.addEventListener('click',()=>{selectView('profile');void renderProfile(post.author?.username);});name.addEventListener('keydown',(event)=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();name.click();}});
-  const handle = document.createElement('span'); handle.textContent = `@${post.author?.username || 'player'} · ${new Date(post.createdAt).toLocaleDateString()}`;
-  meta.append(name, handle); header.append(avatar, meta);
-  for(const destination of post.destinations||[]){if(destination.type==='game'||destination.type==='community'){const tag=document.createElement('span');tag.className=destination.type==='game'?'game-pill':'community-pill';tag.textContent=destination.type==='game'?`Game · ${destination.target}`:`Group · ${destination.target}`;header.append(tag);}}
-  const body = document.createElement('p'); body.className = 'post-card__body'; body.textContent = post.body;
-  const actions = document.createElement('div'); actions.className = 'post-actions';
-  const likeButton = document.createElement('button'); likeButton.type = 'button';likeButton.dataset.liked=String(post.liked===true); likeButton.textContent = `${post.liked?'♥':'♡'} ${post.likeCount || 0}`; likeButton.setAttribute('aria-label', 'Like');
-  likeButton.addEventListener('click', async () => {
-    if (!currentUser) return openAuth({ type: 'like', id: post._id });
-    likeButton.disabled = true;const wasLiked=likeButton.dataset.liked==='true';const count=Number((likeButton.textContent.match(/\d+/)||[0])[0]);likeButton.dataset.liked=String(!wasLiked);likeButton.textContent=`${!wasLiked?'♥':'♡'} ${Math.max(0,count+(wasLiked?-1:1))}`;
-    try { const method = wasLiked ? 'DELETE' : 'POST'; const result = await api(`/posts/${post._id}/like`, { method }); likeButton.dataset.liked = String(result.liked); likeButton.textContent = `${result.liked ? '♥' : '♡'} ${result.likeCount}`; }
-    catch (error) { likeButton.dataset.liked=String(wasLiked);likeButton.textContent=`${wasLiked?'♥':'♡'} ${count}`;toast(error.message); }
-    finally { likeButton.disabled = false; }
-  });
-  const commentButton = document.createElement('button'); commentButton.type = 'button'; commentButton.textContent = `◯ ${post.commentCount || 0}`; commentButton.setAttribute('aria-label', 'Comments');
-  const commentBox = document.createElement('div'); commentBox.className = 'post-comments'; commentBox.hidden = true;
-  commentButton.addEventListener('click', async () => {
-    if (!commentBox.hidden) { commentBox.hidden = true; return; }
-    commentBox.hidden = false;
-    if (!commentBox.dataset.loaded) {
-      try {
-        const comments = await api(`/posts/${post._id}/comments`);
-        for (const item of comments.items || []) { const line = renderComment(item); if(item.parent)line.classList.add('comment-reply');commentBox.append(line);if(currentUser&&!item.parent){const reply=document.createElement('button');reply.type='button';reply.className='text-button';reply.textContent='Reply';reply.addEventListener('click',()=>addReplyForm(post._id,item._id,line));line.append(reply);} }
-        commentBox.dataset.loaded = 'true';
-      } catch (error) { toast(error.message); }
-    }
-    if (currentUser && !$('.comment-form', commentBox)) {
-      const form = document.createElement('form'); form.className = 'comment-form';
-      const input = document.createElement('input'); input.maxLength = 1000; input.required = true; input.placeholder = 'Add to the conversation…'; input.setAttribute('aria-label', 'Write a comment');
-      const send = document.createElement('button'); send.type = 'submit'; send.textContent = 'Send'; form.append(input, send);
-      form.addEventListener('submit', async (event) => { event.preventDefault(); send.disabled = true; try { const result = await api(`/posts/${post._id}/comments`, { method: 'POST', body: JSON.stringify({ body: input.value }) }); const line = document.createElement('p'); const author = document.createElement('strong'); author.textContent = `@${result.comment.author.username} `; line.append(author, document.createTextNode(result.comment.body)); form.before(line); commentButton.textContent = `◯ ${Number((commentButton.textContent.match(/\d+/) || [0])[0]) + 1}`; input.value = ''; } catch (error) { toast(error.message); } finally { send.disabled = false; } });
-      commentBox.append(form);
-    }
-    if (!currentUser) { const signIn = document.createElement('button'); signIn.className = 'text-button'; signIn.type = 'button'; signIn.textContent = 'Sign in to comment'; signIn.addEventListener('click', () => openAuth({ type: 'comment', id: post._id })); commentBox.append(signIn); }
-  });
-  const repostButton = document.createElement('button'); repostButton.type = 'button';repostButton.dataset.reposted=String(post.reposted===true); repostButton.textContent = `↗ ${post.repostCount || 0}`; repostButton.setAttribute('aria-label', 'Repost');
-  repostButton.addEventListener('click', async () => { if (!currentUser) return openAuth({ type: 'repost', id: post._id }); repostButton.disabled = true;const was= repostButton.dataset.reposted==='true';const count=Number((repostButton.textContent.match(/\d+/)||[0])[0]);repostButton.dataset.reposted=String(!was);repostButton.textContent=`↗ ${Math.max(0,count+(was?-1:1))}`;try { const method = was ? 'DELETE' : 'POST'; const result = await api(`/posts/${post._id}/repost`, { method }); repostButton.dataset.reposted = String(result.reposted); repostButton.textContent = `↗ ${result.repostCount}`; toast(result.reposted ? 'Reposted to your circle.' : 'Repost removed.'); } catch (error) { repostButton.dataset.reposted=String(was);repostButton.textContent=`↗ ${count}`;toast(error.message); } finally { repostButton.disabled = false; } });
-  const detailButton=document.createElement('button');detailButton.type='button';detailButton.textContent='Open discussion';detailButton.addEventListener('click',()=>openPostDetail(post._id));
-  actions.append(likeButton, commentButton, repostButton,detailButton);
-  article.append(header, body, actions, commentBox); return article;
+function iconSvg(name) {
+  const paths = {
+    heart: '<path d="M20.8 8.7c0 4.3-8.8 10-8.8 10s-8.8-5.7-8.8-10A4.7 4.7 0 0 1 12 6.2a4.7 4.7 0 0 1 8.8 2.5Z"/>',
+    comment: '<path d="M20.5 11.7a8.2 8.2 0 0 1-8.5 7.8 9 9 0 0 1-3.4-.7L4 20l1.2-4a7.2 7.2 0 0 1-2.2-5.1A8.1 8.1 0 0 1 11.5 3h.5a8.2 8.2 0 0 1 8.5 8.2v.5Z"/>',
+    repost: '<path d="m17 1 4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>',
+    share: '<path d="M12 16V3m-5 5 5-5 5 5"/><path d="M5 13v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7"/>'
+  };
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true'); svg.innerHTML = paths[name];
+  return svg;
 }
 
+function renderPost(post) {
+  const article = document.createElement('article'); article.className = 'post-card glass-panel'; article.id = `post-${post._id}`; article.dataset.postId = post._id;
+  const header = document.createElement('div'); header.className = 'post-card__head';
+  const avatar = document.createElement('span'); avatar.className = 'avatar post-avatar'; avatar.textContent = (post.author?.displayName || post.author?.username || '?')[0].toUpperCase();
+  if (post.author?.avatar) avatar.classList.add(post.author.avatar);
+  const meta = document.createElement('div'); meta.className = 'post-meta';
+  const name = document.createElement('strong'); name.textContent = post.author?.displayName || post.author?.username || 'Player'; name.tabIndex = 0; name.role = 'link';
+  name.addEventListener('click', () => { selectView('profile'); void renderProfile(post.author?.username); });
+  name.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); name.click(); } });
+  const handle = document.createElement('span'); handle.textContent = `@${post.author?.username || 'player'} · ${new Date(post.createdAt).toLocaleDateString()}`; meta.append(name, handle); header.append(avatar, meta);
+  for (const destination of post.destinations || []) if (destination.type === 'game' || destination.type === 'community') { const tag = document.createElement('span'); tag.className = destination.type === 'game' ? 'game-pill' : 'community-pill'; tag.textContent = `${destination.type === 'game' ? 'Game' : 'Group'} · ${destination.target}`; header.append(tag); }
+  const body = document.createElement('p'); body.className = 'post-card__body'; body.textContent = post.body;
+  const summary = document.createElement('div'); summary.className = 'comments-summary';
+  const heartSummary = document.createElement('span'); heartSummary.className = 'summary-heart'; heartSummary.append(iconSvg('heart'));
+  const likeSummary = document.createElement('span'); likeSummary.textContent = String(post.likeCount || 0);
+  const divider = document.createElement('span'); divider.textContent = '·'; divider.setAttribute('aria-hidden', 'true');
+  const commentSummary = document.createElement('button'); commentSummary.type = 'button'; commentSummary.textContent = `${post.commentCount || 0} ${post.commentCount === 1 ? 'comment' : 'comments'}`; commentSummary.setAttribute('aria-label', `View ${post.commentCount || 0} comments`);
+  summary.append(heartSummary, likeSummary, divider, commentSummary);
+  const actions = document.createElement('div'); actions.className = 'post-actions';
+  const makeButton = (name, label, count = null) => { const button = document.createElement('button'); button.type = 'button'; button.dataset.actionName = name; button.setAttribute('aria-label', label); button.append(iconSvg(name)); if (count !== null) { const number = document.createElement('span'); number.className = 'action-count'; number.textContent = String(count); button.append(number); } const text = document.createElement('span'); text.className = 'action-label'; text.textContent = label; button.append(text); return button; };
+  const likeButton = makeButton('heart', 'Like', post.likeCount || 0); likeButton.setAttribute('aria-pressed', String(post.liked === true));
+  const commentButton = makeButton('comment', 'Comments', post.commentCount || 0);
+  const repostButton = makeButton('repost', 'Repost', post.repostCount || 0); repostButton.setAttribute('aria-pressed', String(post.reposted === true));
+  const shareButton = makeButton('share', 'Share');
+  const updateCount = (button, value) => { $('.action-count', button).textContent = String(value); };
+  const updateComments = (value) => { post.commentCount = value; updateCount(commentButton, value); commentSummary.textContent = `${value} ${value === 1 ? 'comment' : 'comments'}`; commentSummary.setAttribute('aria-label', `View ${value} comments`); };
+  const updateLikes = (value) => { post.likeCount = value; updateCount(likeButton, value); likeSummary.textContent = String(value); };
+  const showComments = () => openComments(post, document.activeElement);
+  commentButton.addEventListener('click', showComments); commentSummary.addEventListener('click', showComments);
+  likeButton.addEventListener('click', async () => {
+    if (!currentUser) return openAuth({ type: 'like', id: post._id });
+    const was = likeButton.getAttribute('aria-pressed') === 'true'; const previous = Number(post.likeCount || 0); const next = Math.max(0, previous + (was ? -1 : 1));
+    likeButton.setAttribute('aria-pressed', String(!was)); updateLikes(next); likeButton.classList.toggle('is-pop', !was); window.setTimeout(() => likeButton.classList.remove('is-pop'), 320); likeButton.disabled = true;
+    try { const result = await api(`/posts/${post._id}/like`, { method: was ? 'DELETE' : 'POST' }); likeButton.setAttribute('aria-pressed', String(result.liked)); updateLikes(result.likeCount); }
+    catch (error) { likeButton.setAttribute('aria-pressed', String(was)); updateLikes(previous); toast(error.message); }
+    finally { likeButton.disabled = false; }
+  });
+  repostButton.addEventListener('click', async () => {
+    if (!currentUser) return openAuth({ type: 'repost', id: post._id });
+    const was = repostButton.getAttribute('aria-pressed') === 'true'; const previous = Number(post.repostCount || 0); updateCount(repostButton, Math.max(0, previous + (was ? -1 : 1))); repostButton.setAttribute('aria-pressed', String(!was)); repostButton.disabled = true;
+    try { const result = await api(`/posts/${post._id}/repost`, { method: was ? 'DELETE' : 'POST' }); post.repostCount = result.repostCount; updateCount(repostButton, result.repostCount); repostButton.setAttribute('aria-pressed', String(result.reposted)); toast(result.reposted ? 'Reposted to your circle.' : 'Repost removed.'); }
+    catch (error) { repostButton.setAttribute('aria-pressed', String(was)); post.repostCount = previous; updateCount(repostButton, previous); toast(error.message); }
+    finally { repostButton.disabled = false; }
+  });
+  shareButton.addEventListener('click', async () => { const link = new URL(location.href); link.hash = `post/${post._id}`; try { await navigator.clipboard.writeText(link.toString()); toast('Post link copied.'); } catch { toast('Could not copy the post link.'); } });
+  actions.append(likeButton, commentButton, repostButton, shareButton);
+  article.append(header, body, summary, actions);
+  article._updateComments = updateComments;
+  return article;
+}
+
+const commentsDialog = $('#comments-dialog');
+let activeCommentsPost = null;
+let commentsReturnFocus = null;
+let commentsHashPushed = false;
+let commentsLoadGeneration = 0;
+let commentsTouchStart = null;
+
+function commentTime(item) {
+  const time = document.createElement('time');
+  const date = new Date(item.createdAt || item.updatedAt || Date.now());
+  time.dateTime = date.toISOString(); time.textContent = date.toLocaleDateString();
+  return time;
+}
+
+function discussionComment(item, onReply) {
+  const row = document.createElement('article'); row.className = 'discussion-comment'; row.dataset.commentId = String(item._id || '');
+  if (item.parent) row.classList.add('is-reply');
+  const avatar = document.createElement('span'); avatar.className = 'discussion-avatar';
+  avatar.textContent = (item.author?.displayName || item.author?.username || '?')[0].toUpperCase();
+  if (item.author?.avatar) avatar.classList.add(item.author.avatar);
+  const content = document.createElement('div'); content.className = 'discussion-main';
+  const meta = document.createElement('div'); meta.className = 'discussion-meta';
+  const author = document.createElement('strong'); author.textContent = item.author?.displayName || item.author?.username || 'Player';
+  meta.append(author, commentTime(item));
+  const body = document.createElement('p'); body.className = 'discussion-text'; body.textContent = item.body;
+  content.append(meta, body);
+  if (!item.parent && currentUser && onReply) {
+    const reply = document.createElement('button'); reply.className = 'text-button'; reply.type = 'button'; reply.textContent = 'Reply'; reply.addEventListener('click', () => onReply(item, row)); content.append(reply);
+  }
+  row.append(avatar, content);
+  return row;
+}
+
+function setCommentSkeletons() {
+  const list = $('#comments-list'); list.replaceChildren();
+  for (let i = 0; i < 4; i++) { const skeleton = document.createElement('div'); skeleton.className = 'comment-skeleton'; skeleton.setAttribute('aria-hidden', 'true'); list.append(skeleton); }
+}
+
+function setCommentsError(error, retry) {
+  const host = $('#comments-error'); host.hidden = false; host.replaceChildren(document.createTextNode(error.message || 'Could not load comments.'));
+  const button = document.createElement('button'); button.className = 'button'; button.type = 'button'; button.textContent = 'Retry'; button.addEventListener('click', retry); host.append(button);
+}
+
+function renderDiscussion(items) {
+  const list = $('#comments-list'); list.replaceChildren();
+  if (!items.length) {
+    const empty = document.createElement('div'); empty.className = 'comments-empty';
+    const image = document.createElement('img'); image.src = '/assets/arcadia/empty-states/empty-posts.svg'; image.alt = '';
+    const copy = document.createElement('p'); copy.textContent = 'No comments yet. Start the conversation.'; empty.append(image, copy); list.append(empty); return;
+  }
+  const roots = new Map(); const replies = new Map();
+  for (const item of items) {
+    if (item.parent) { const parentId = String(item.parent?._id || item.parent); const bucket = replies.get(parentId) || []; bucket.push(item); replies.set(parentId, bucket); }
+    else roots.set(String(item._id), item);
+  }
+  for (const item of roots.values()) {
+    const root = discussionComment(item, (parent, anchor) => openReplyComposer(parent, anchor)); list.append(root);
+    const children = replies.get(String(item._id)) || [];
+    if (children.length) { const group = document.createElement('div'); group.className = 'discussion-replies'; for (const child of children) group.append(discussionComment(child)); list.append(group); }
+  }
+}
+
+async function loadDiscussion(post, generation = commentsLoadGeneration) {
+  $('#comments-error').hidden = true; setCommentSkeletons();
+  try {
+    const data = await api(`/posts/${post._id}/comments?limit=50`);
+    if (generation !== commentsLoadGeneration || !commentsDialog.open) return;
+    renderDiscussion(data.items || []);
+  } catch (error) {
+    if (generation !== commentsLoadGeneration) return;
+    $('#comments-list').replaceChildren(); setCommentsError(error, () => loadDiscussion(post, generation));
+  }
+}
+
+function openComments(post, trigger = document.activeElement, options = {}) {
+  if (!post?._id) return;
+  const id = String(post._id);
+  if (commentsDialog.open && String(activeCommentsPost?._id) === id) return;
+  activeCommentsPost = post; commentsReturnFocus = trigger instanceof HTMLElement ? trigger : null; commentsLoadGeneration++;
+  const author = post.author?.displayName || post.author?.username || 'Player';
+  $('.comments-title-desktop').textContent = `${author}’s post`;
+  const postHost = $('#comments-post'); postHost.replaceChildren();
+  const authorLine = document.createElement('strong'); authorLine.textContent = author;
+  const text = document.createElement('p'); text.textContent = post.body || '';
+  postHost.append(authorLine, text);
+  $('#comments-form').hidden = !currentUser; $('#comments-signin').hidden = Boolean(currentUser);
+  $('#comments-error').hidden = true;
+  if (options.updateHash !== false && location.hash !== `#post/${id}`) {
+    history.pushState({ ...(history.state || {}), arcadiaComments: id }, '', `#post/${id}`); commentsHashPushed = true;
+  } else commentsHashPushed = false;
+  if (!commentsDialog.open) commentsDialog.showModal();
+  document.body.classList.add('comments-open');
+  loadDiscussion(post);
+  if (currentUser) window.setTimeout(() => $('#comments-input').focus(), 40);
+}
+
+function closeCommentsNow({ clearHash = true } = {}) {
+  if (!commentsDialog.open) return;
+  commentsDialog.close(); document.body.classList.remove('comments-open'); activeCommentsPost = null; commentsLoadGeneration++;
+  if (clearHash && /^#post\/[a-f\d]{24}$/i.test(location.hash)) history.replaceState(history.state, '', `${location.pathname}${location.search}`);
+  const target = commentsReturnFocus; commentsReturnFocus = null;
+  if (target?.isConnected) window.setTimeout(() => target.focus(), 0);
+}
+
+function requestCommentsClose() {
+  if (commentsHashPushed && /^#post\/[a-f\d]{24}$/i.test(location.hash)) { commentsHashPushed = false; history.back(); return; }
+  closeCommentsNow();
+}
+
+async function syncCommentsRoute() {
+  const match = location.hash.match(/^#post\/([a-f\d]{24})$/i);
+  if (!match) { if (commentsDialog.open) closeCommentsNow({ clearHash: false }); return; }
+  if (commentsDialog.open && String(activeCommentsPost?._id) === match[1]) return;
+  try { const result = await api(`/posts/${match[1]}`); openComments(result.post, null, { updateHash: false }); }
+  catch { history.replaceState(history.state, '', `${location.pathname}${location.search}`); toast('That post is unavailable.'); }
+}
+
+async function openReplyComposer(parent, anchor) {
+  if ($('.comment-reply-form', $('#comments-list'))) return;
+  const form = document.createElement('form'); form.className = 'comment-reply-form';
+  const input = document.createElement('input'); input.required = true; input.maxLength = 1000; input.placeholder = 'Write a reply'; input.setAttribute('aria-label', 'Write a reply');
+  const send = document.createElement('button'); send.type = 'submit'; send.className = 'button button--primary'; send.textContent = 'Reply'; form.append(input, send); anchor.after(form); input.focus();
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault(); if (!activeCommentsPost) return; send.disabled = true;
+    const temp = { _id: `pending-${Date.now()}`, parent: parent._id, body: input.value, createdAt: new Date().toISOString(), author: currentUser };
+    const row = discussionComment(temp); row.classList.add('is-pending'); form.after(row);
+    try { const result = await api(`/posts/${activeCommentsPost._id}/comments`, { method: 'POST', body: JSON.stringify({ body: input.value, parent: parent._id }) }); row.replaceWith(discussionComment(result.comment)); activeCommentsPost.commentCount = (activeCommentsPost.commentCount || 0) + 1; document.querySelector(`#post-${activeCommentsPost._id}`)?._updateComments?.(activeCommentsPost.commentCount); form.remove(); }
+    catch (error) { row.remove(); send.disabled = false; setCommentsError(error, () => form.requestSubmit()); }
+  });
+}
+
+$('#comments-close').addEventListener('click', requestCommentsClose);
+$('#comments-signin').addEventListener('click', () => openAuth({ type: 'comment', id: activeCommentsPost?._id }));
+commentsDialog.addEventListener('click', (event) => { if (event.target === commentsDialog) requestCommentsClose(); });
+commentsDialog.addEventListener('cancel', (event) => { event.preventDefault(); requestCommentsClose(); });
+commentsDialog.addEventListener('close', () => { document.body.classList.remove('comments-open'); });
+$('#comments-form').addEventListener('submit', async (event) => {
+  event.preventDefault(); if (!activeCommentsPost) return;
+  const commentsForm = event.currentTarget;
+  const input = $('#comments-input'); const send = $('button[type="submit"]', commentsForm); const body = input.value.trim(); if (!body) return;
+  send.disabled = true; const temp = { _id: `pending-${Date.now()}`, body, createdAt: new Date().toISOString(), author: currentUser };
+  const pending = discussionComment(temp, (parent, anchor) => openReplyComposer(parent, anchor)); pending.classList.add('is-pending'); $('#comments-list').append(pending); $('#comments-list').scrollTop = $('#comments-list').scrollHeight;
+  try { const result = await api(`/posts/${activeCommentsPost._id}/comments`, { method: 'POST', body: JSON.stringify({ body }) }); pending.replaceWith(discussionComment(result.comment, (parent, anchor) => openReplyComposer(parent, anchor))); activeCommentsPost.commentCount = (activeCommentsPost.commentCount || 0) + 1; document.querySelector(`#post-${activeCommentsPost._id}`)?._updateComments?.(activeCommentsPost.commentCount); input.value = ''; $('#comments-error').hidden = true; }
+  catch (error) { pending.remove(); setCommentsError(error, () => commentsForm.requestSubmit()); }
+  finally { send.disabled = false; }
+});
+const commentsHandle = $('.comments-drag-handle');
+commentsHandle.addEventListener('touchstart', (event) => { commentsTouchStart = event.touches[0].clientY; }, { passive: true });
+commentsHandle.addEventListener('touchend', (event) => { if (commentsTouchStart !== null && event.changedTouches[0].clientY - commentsTouchStart > 75) requestCommentsClose(); commentsTouchStart = null; }, { passive: true });
+window.visualViewport?.addEventListener('resize', () => { document.documentElement.style.setProperty('--visual-vh', `${window.visualViewport.height}px`); document.documentElement.style.setProperty('--keyboard-inset', `${Math.max(0, window.innerHeight - window.visualViewport.height)}px`); });
+window.addEventListener('popstate', syncCommentsRoute); window.addEventListener('hashchange', syncCommentsRoute);
+if (/^#post\/[a-f\d]{24}$/i.test(location.hash)) window.setTimeout(syncCommentsRoute, 0);
+
 function renderComment(item){const line=document.createElement('div');line.className='comment-line';const author=document.createElement('strong');author.textContent=`@${item.author?.username||'player'} `;const body=document.createElement('span');body.textContent=item.body;line.append(author,body);return line;}
-function addReplyForm(postId,parentId,anchor){if($('.reply-form',anchor.parentElement))return;const form=document.createElement('form');form.className='comment-form reply-form';const input=document.createElement('input');input.maxLength=1000;input.required=true;input.placeholder='Write a reply';const submit=document.createElement('button');submit.type='submit';submit.textContent='Reply';form.append(input,submit);form.addEventListener('submit',async(event)=>{event.preventDefault();submit.disabled=true;try{const result=await api(`/posts/${postId}/comments`,{method:'POST',body:JSON.stringify({body:input.value,parent:parentId})});const line=renderComment(result.comment);line.classList.add('comment-reply');anchor.after(line,form);toast('Reply added.');}catch(error){toast(error.message);submit.disabled=false;}});anchor.after(form);input.focus();}
+function addReplyForm(postId,parentId,anchor){if($('.reply-form',anchor.parentElement))return;const form=document.createElement('form');form.className='comment-form reply-form';const input=document.createElement('input');input.maxLength=1000;input.required=true;input.placeholder='Write a reply';const submit=document.createElement('button');submit.type='submit';submit.textContent='Reply';form.append(input,submit);form.addEventListener('submit',async(event)=>{event.preventDefault();submit.disabled=true;try{const result=await api(`/posts/${postId}/comments`,{method:'POST',body:JSON.stringify({body:input.value,parent:parentId})});const line=renderComment(result.comment);line.classList.add('comment-reply');form.after(line);form.remove();toast('Reply added.');}catch(error){toast(error.message);submit.disabled=false;}});anchor.after(form);input.focus();}
 function createOwnerTools(slug){const form=document.createElement('form');form.className='community-owner-tools glass-panel';const title=document.createElement('h3');title.textContent='Manage moderators';const username=document.createElement('input');username.placeholder='Member username';username.pattern='[A-Za-z0-9_]{3,24}';username.required=true;username.setAttribute('aria-label','Member username');const role=document.createElement('select');role.setAttribute('aria-label','Member role');for(const value of ['moderator','member']){const option=document.createElement('option');option.value=value;option.textContent=value==='moderator'?'Make moderator':'Make member';role.append(option);}const submit=document.createElement('button');submit.className='button';submit.type='submit';submit.textContent='Update role';form.append(title,username,role,submit);form.addEventListener('submit',async(event)=>{event.preventDefault();submit.disabled=true;try{await api(`/communities/${slug}/members/${encodeURIComponent(username.value)}/role`,{method:'PATCH',body:JSON.stringify({role:role.value})});toast('Member role updated.');}catch(error){toast(error.message);}finally{submit.disabled=false;}});return form;}
 async function openPostDetail(postId){let modal=$('#post-detail-dialog');if(!modal){modal=document.createElement('dialog');modal.id='post-detail-dialog';modal.className='auth-dialog glass-panel';document.body.append(modal);}modal.replaceChildren();const title=document.createElement('h2');title.textContent='Post discussion';const loading=document.createElement('p');loading.textContent='Loading conversation…';modal.append(title,loading);if(!modal.open)modal.showModal();try{const data=await api(`/posts/${postId}`);modal.replaceChildren(title);const body=document.createElement('p');body.className='post-card__body';body.textContent=data.post.body;modal.append(body);const list=document.createElement('div');list.className='post-comments';for(const comment of data.comments){const line=renderComment(comment);if(comment.parent)line.classList.add('comment-reply');list.append(line);if(currentUser&&!comment.parent){const reply=document.createElement('button');reply.className='text-button';reply.type='button';reply.textContent='Reply';reply.addEventListener('click',()=>addReplyForm(postId,comment._id,line));line.append(reply);}}modal.append(list);if(currentUser){const form=document.createElement('form');form.className='comment-form';const input=document.createElement('input');input.required=true;input.maxLength=1000;input.placeholder='Add to the conversation';const send=document.createElement('button');send.type='submit';send.textContent='Comment';form.append(input,send);form.addEventListener('submit',async(event)=>{event.preventDefault();send.disabled=true;try{const result=await api(`/posts/${postId}/comments`,{method:'POST',body:JSON.stringify({body:input.value})});list.append(renderComment(result.comment));input.value='';toast('Comment added.');}catch(error){toast(error.message);}finally{send.disabled=false;}});modal.append(form);}else{const signIn=document.createElement('button');signIn.type='button';signIn.className='button button--primary';signIn.textContent='Sign in to comment';signIn.addEventListener('click',()=>{modal.close();openAuth({type:'comment',id:postId});});modal.append(signIn);}}catch(error){loading.textContent=error.message;}}
 
@@ -411,11 +649,11 @@ function startOnboarding() {
     const eyebrow = document.createElement('p'); eyebrow.className='eyebrow'; eyebrow.textContent=`PLAYER SETUP · STEP ${state.step - 1} OF 4`;
     const title = document.createElement('h2'); title.id='onboarding-title';
     const content=document.createElement('div'); content.className='onboarding-content';
-    const next=document.createElement('button'); next.className='button button--primary button--wide';next.type='button';next.textContent=state.step===5?'Enter your feed':'Continue →';
+    const next=document.createElement('button'); next.className='button button--primary button--wide';next.type='button';next.textContent=state.step===5?'Enter your feed':'Continue';
     const error=document.createElement('p');error.className='auth-error';error.setAttribute('role','status');
     dialogNode.append(close,eyebrow,title,content,error,next);
     if(state.step===2){
-      title.textContent='What do you play?';const copy=document.createElement('p');copy.className='dialog-copy';copy.textContent='Pick a few genres to tune your corner of MKSTUDIOS.';content.append(copy);
+      title.textContent='What do you play?';const copy=document.createElement('p');copy.className='dialog-copy';copy.textContent='Pick a few genres to tune your corner of Arcadia.';content.append(copy);
       for(const [value,label] of genreOptions){const button=document.createElement('button');button.type='button';button.className=`interest-chip${state.genres.includes(value)?' is-selected':''}`;button.textContent=label;button.setAttribute('aria-pressed',String(state.genres.includes(value)));button.addEventListener('click',()=>{state.genres=state.genres.includes(value)?state.genres.filter((item)=>item!==value):[...state.genres,value];render();});content.append(button);}
     } else if(state.step===3){
       title.textContent='Choose your games';const search=document.createElement('input');search.type='search';search.placeholder='Search the catalog';search.setAttribute('aria-label','Search favorite games');content.append(search);const results=document.createElement('div');results.className='onboarding-games';content.append(results);
@@ -448,6 +686,7 @@ function editProfile(card,user){
 
 async function renderSettings(host){
   let panel=$('#settings-panel',host);if(!panel){panel=document.createElement('section');panel.id='settings-panel';panel.className='settings-panel glass-panel';host.append(panel);}panel.replaceChildren();const title=document.createElement('h2');title.textContent='Settings';panel.append(title);const account=document.createElement('p');account.textContent=`Account · @${currentUser.username}`;panel.append(account);
+  const appearance=document.createElement('section');appearance.className='settings-appearance';const appearanceTitle=document.createElement('h3');appearanceTitle.textContent='Appearance';const appearanceCopy=document.createElement('p');appearanceCopy.textContent='Choose the look that feels right on your screen.';const appearanceLabel=document.createElement('label');appearanceLabel.htmlFor='theme-preference';appearanceLabel.textContent='Theme';const themeSelect=document.createElement('select');themeSelect.id='theme-preference';themeSelect.setAttribute('aria-label','Color theme');for(const [value,label] of [['light','Light mode'],['dark','Dark mode']]){const option=document.createElement('option');option.value=value;option.textContent=label;themeSelect.append(option);}themeSelect.value=document.documentElement.dataset.theme||'light';themeSelect.addEventListener('change',()=>{applyTheme(themeSelect.value);toast(`${themeSelect.value==='dark'?'Dark':'Light'} mode enabled.`);});appearance.append(appearanceTitle,appearanceCopy,appearanceLabel,themeSelect);panel.append(appearance);
   const interests=document.createElement('button');interests.className='button';interests.type='button';interests.textContent='Update gaming interests';interests.addEventListener('click',startOnboarding);panel.append(interests);
   const password=document.createElement('form');password.innerHTML='<h3>Password</h3><input name="currentPassword" type="password" autocomplete="current-password" placeholder="Current password" required><input name="newPassword" type="password" autocomplete="new-password" placeholder="New password, at least 10 characters" minlength="10" maxlength="128" required><button class="button" type="submit">Change password</button>';password.addEventListener('submit',async(event)=>{event.preventDefault();const values=Object.fromEntries(new FormData(password));const button=$('button',password);button.disabled=true;try{await api('/auth/password',{method:'POST',body:JSON.stringify(values)});password.reset();toast('Password changed. Other sessions were signed out.');}catch(e){toast(e.message);}finally{button.disabled=false;}});panel.append(password);
   const settings=await api('/auth/settings').catch(()=>({settings:{notificationPreferences:{},privacy:{}}}));const form=document.createElement('form');form.innerHTML='<h3>Notifications</h3><label><input type="checkbox" name="comments"> Comments & replies</label><label><input type="checkbox" name="reactions"> Reactions & reposts</label><label><input type="checkbox" name="communities"> Community activity</label><h3>Privacy</h3><label>Profile visibility <select name="profileVisibility"><option value="public">Public</option><option value="private">Private</option></select></label><label>Friend requests <select name="friendRequests"><option value="everyone">Everyone</option><option value="nobody">Nobody</option></select></label><button class="button button--primary" type="submit">Save preferences</button>';for(const key of ['comments','reactions','communities'])$(`[name="${key}"]`,form).checked=settings.settings.notificationPreferences?.[key]!==false;for(const key of ['profileVisibility','friendRequests'])$(`[name="${key}"]`,form).value=settings.settings.privacy?.[key]||'everyone';form.addEventListener('submit',async(event)=>{event.preventDefault();const values=new FormData(form);try{await api('/auth/settings',{method:'PATCH',body:JSON.stringify({notificationPreferences:{comments:values.has('comments'),reactions:values.has('reactions'),communities:values.has('communities')},privacy:{profileVisibility:values.get('profileVisibility'),friendRequests:values.get('friendRequests')}})});toast('Settings saved.');}catch(e){toast(e.message);}});panel.append(form);

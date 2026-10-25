@@ -33,10 +33,26 @@ test('isolated Mongo social flows enforce authentication, idempotency, visibilit
   }
   try {
     await t.test('guest actions are blocked and cross-site writes fail', async () => {
+      const me = await request('/api/auth/me');
+      assert.equal(me.response.status, 200);
+      assert.deepEqual(me.json, { user: null });
       const guest = await request('/api/posts', { method: 'POST', body: { body: 'blocked', destinations: [{ type: 'general' }] } });
       assert.equal(guest.response.status, 401);
       const noOrigin = await fetch(`${base}/api/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'no_origin', password: 'secure-integration-password' }) });
       assert.equal(noOrigin.status, 403);
+    });
+
+    await t.test('registration reports validation and duplicate username or email conflicts', async () => {
+      const username = `duplicate_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+      const email = `${randomUUID()}@example.invalid`;
+      const first = await request('/api/auth/register', { method: 'POST', body: { username, email, password: 'secure-integration-password' } });
+      assert.equal(first.response.status, 201);
+      const duplicateName = await request('/api/auth/register', { method: 'POST', body: { username, password: 'secure-integration-password' } });
+      assert.equal(duplicateName.response.status, 409);
+      const duplicateEmail = await request('/api/auth/register', { method: 'POST', body: { username: `${username}_alt`, email, password: 'secure-integration-password' } });
+      assert.equal(duplicateEmail.response.status, 409);
+      const invalid = await request('/api/auth/register', { method: 'POST', body: { username: `${username}_invalid`, email: 'bad-email', password: 'secure-integration-password' } });
+      assert.equal(invalid.response.status, 400);
     });
 
     await t.test('likes, unlikes, reposts, comments, and replies persist idempotently', async () => {
@@ -104,7 +120,7 @@ test('isolated Mongo social flows enforce authentication, idempotency, visibilit
       assert.equal((await request(`/api/auth/profiles/${username}`,{auth:first})).response.status,200);
       const changed = await request('/api/auth/password', { method: 'POST', auth: first, body: { currentPassword: 'secure-integration-password', newPassword: 'a-different-secure-password' } });
       assert.equal(changed.response.status, 200);
-      assert.equal((await request('/api/auth/me', { auth: second })).response.status, 401);
+      assert.deepEqual((await request('/api/auth/me', { auth: second })).json.user, null);
       assert.equal((await request('/api/auth/me', { auth: first })).response.status, 200);
     });
   } finally {

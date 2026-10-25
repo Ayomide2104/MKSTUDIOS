@@ -6,6 +6,8 @@ const User = require('../src/models/User');
 test('registration normalizes usernames and enforces username and password rules', () => {
   assert.equal(normalizeUsername('  Mixed_Case  '), 'mixed_case');
   assert.deepEqual(validateRegistration({ username: 'Player_1', password: 'long-enough-pass' }), { valid: true, username: 'player_1' });
+  assert.deepEqual(validateRegistration({ username: 'Player_1', email: ' PLAYER@example.invalid ', password: 'long-enough-pass' }), { valid: true, username: 'player_1', email: 'player@example.invalid' });
+  assert.equal(validateRegistration({ username: 'Player_1', email: 'not-an-email', password: 'long-enough-pass' }).valid, false);
   assert.equal(validateRegistration({ username: 'no', password: 'long-enough-pass' }).valid, false);
   assert.equal(validateRegistration({ username: 'fine', password: 'short' }).valid, false);
   assert.equal(validateRegistration({ username: { $ne: '' }, password: 'long-enough-pass' }).valid, false);

@@ -9,7 +9,12 @@ function validateRegistration(body) {
   const username = normalizeUsername(body.username);
   if (!/^[a-z0-9_]{3,24}$/.test(username)) return { valid: false, error: 'Username must be 3–24 characters: letters, numbers, and underscores.' };
   if (body.password.length < 10 || body.password.length > 128) return { valid: false, error: 'Password must be between 10 and 128 characters.' };
-  return { valid: true, username };
+  let email;
+  if (body.email !== undefined) {
+    if (typeof body.email !== 'string' || body.email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email.trim())) return { valid: false, error: 'Enter a valid email address.' };
+    email = body.email.trim().toLowerCase();
+  }
+  return { valid: true, username, ...(email ? { email } : {}) };
 }
 
 function serializePublicUser(user) {

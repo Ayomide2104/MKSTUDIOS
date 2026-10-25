@@ -17,10 +17,9 @@ test('general feed visibility requires an explicit general destination', () => {
   assert.equal(isVisibleInGeneralFeed({ destinations:[{type:'general'},{type:'community',target:'lobby'}] }),true);
 });
 
-test('protected social actions reject guests before reaching database writes', async () => {
+test('guest session lookup is quiet while protected social actions reject guests', async () => {
   await withServer(async (base)=>{
     for (const [path,method,body] of [
-      ['/api/auth/me','GET'],
       ['/api/posts','POST',{body:'hello',destinations:[{type:'general'}]}],
       ['/api/games/valorant/interest','PUT',{interested:true}],
       ['/api/communities/fc-mobile/join','POST']
@@ -29,6 +28,9 @@ test('protected social actions reject guests before reaching database writes', a
       assert.equal(response.status,401,path);
       assert.equal((await response.json()).success,false);
     }
+    const me = await fetch(`${base}/api/auth/me`);
+    assert.equal(me.status, 200);
+    assert.deepEqual(await me.json(), { user: null });
   });
 });
 

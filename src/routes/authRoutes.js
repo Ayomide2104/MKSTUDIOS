@@ -30,11 +30,12 @@ router.post('/register', registerLimit, async (req, res, next) => {
     const username = validation.username;
     const password = req.body.password;
     const passwordHash = await bcrypt.hash(password, 12);
-    const user = await User.create({ username, passwordHash });
+    const user = await User.create({ username, passwordHash, ...(validation.email ? { email: validation.email } : {}) });
     const csrfToken = await issueSession(user._id, res);
     res.status(201).json({ success: true, data: { user: serializePublicUser(user), csrfToken } });
   } catch (error) {
-    if (error.code === 11000) return res.status(409).json({ success: false, error: 'That username is unavailable.' });
+    if (error.code === 11000) return res.status(409).json({ success: false, error: 'That username or email is already in use.' });
+    if (error.name === 'ValidationError' || error.name === 'CastError') return res.status(400).json({ success: false, error: 'Enter valid registration details.' });
     next(error);
   }
 });
@@ -50,12 +51,14 @@ router.post('/login', loginLimit, async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-router.get('/me', requireAuth, async (req, res, next) => {
+router.get('/me', optionalAuth, async (req, res, next) => {
   try {
-    let session = await Session.findById(req.sessionId).select('+csrfToken').lean();
+    if (!req.user) return res.json({ user: null });
+    const tokenHash = crypto.createHash('sha256').update(req.cookies.mk_session).digest('hex');
+    let session = await Session.findOne({ tokenHash, expiresAt: { $gt: new Date() } }).select('+csrfToken').lean();
     if (session && !session.csrfToken) {
       session.csrfToken = crypto.randomBytes(32).toString('base64url');
-      await Session.updateOne({ _id: req.sessionId }, { $set: { csrfToken: session.csrfToken } });
+      await Session.updateOne({ _id: session._id }, { $set: { csrfToken: session.csrfToken } });
     }
     res.json({ success: true, data: { user: serializePublicUser(req.user), csrfToken: session?.csrfToken || null } });
   } catch (error) { next(error); }
