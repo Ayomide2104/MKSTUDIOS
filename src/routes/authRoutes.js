@@ -8,6 +8,9 @@ const { requireAuth, optionalAuth } = require('../middleware/auth');
 const rateLimit = require('../middleware/rateLimit');
 const { normalizeUsername, validateRegistration, serializePublicUser } = require('../services/socialContracts');
 
+const uploadImage = require('../middleware/imageUpload');
+const cloudinary = require('../config/cloudinary');
+
 const router = express.Router();
 const WINDOW = 15 * 60 * 1000;
 const registerLimit = rateLimit({ name: 'auth-register', max: 12, windowMs: WINDOW });
@@ -170,3 +173,140 @@ router.get('/profiles/:username/posts', optionalAuth, async (req,res,next)=>{
 });
 
 module.exports = router;
+
+// POST /api/auth/avatar
+router.post(
+  '/avatar',
+  requireAuth,
+  uploadImage.single('photo'),
+  async (req, res, next) => {
+    let uploadedImage = null;
+
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          error: 'Choose a profile picture to upload.',
+        });
+      }
+
+      // Validate the actual image signature.
+      const buffer = req.file.buffer;
+
+      const isJpeg =
+        buffer.length >= 3 &&
+        buffer[0] === 0xff &&
+        buffer[1] === 0xd8 &&
+        buffer[2] === 0xff;
+
+      const isPng =
+        buffer.length >= 8 &&
+        buffer.subarray(0, 8).equals(
+          Buffer.from([
+            0x89, 0x50, 0x4e, 0x47,
+            0x0d, 0x0a, 0x1a, 0x0a,
+          ])
+        );
+
+      const isGif =
+        buffer.length >= 6 &&
+        ['GIF87a', 'GIF89a'].includes(
+          buffer.subarray(0, 6).toString('ascii')
+        );
+
+      const isWebp =
+        buffer.length >= 12 &&
+        buffer.toString('ascii', 0, 4) === 'RIFF' &&
+        buffer.toString('ascii', 8, 12) === 'WEBP';
+
+      if (!(isJpeg || isPng || isGif || isWebp)) {
+        return res.status(400).json({
+          success: false,
+          error: 'The uploaded file is not a supported image.',
+        });
+      }
+
+      cloudinary.ensureCloudinaryConfigured();
+
+      // Upload the image to the user's own avatar location.
+      uploadedImage = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            folder: 'arcadia/avatars',
+            public_id: `user_${req.user._id}_${Date.now()}`,
+            resource_type: 'image',
+            allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
+            transformation: [
+              {
+                width: 512,
+                height: 512,
+                crop: 'fill',
+                gravity: 'auto',
+              },
+            ],
+          },
+          (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          }
+        );
+
+        stream.end(buffer);
+      });
+
+      const user = await User.findByIdAndUpdate(
+        req.user._id,
+        {
+          $set: {
+            avatar: uploadedImage.secure_url,
+          },
+        },
+        {
+          new: true,
+          runValidators: true,
+        }
+      ).lean();
+
+      if (!user) {
+        await cloudinary.uploader.destroy(uploadedImage.public_id);
+        uploadedImage = null;
+
+        return res.status(404).json({
+          success: false,
+          error: 'Your account could not be found.',
+        });
+      }
+
+      return res.json({
+        success: true,
+        data: {
+          user: {
+            id: String(user._id),
+            username: user.username,
+            displayName: user.displayName || '',
+            bio: user.bio || '',
+            avatar: user.avatar || null,
+            genres: user.genres || [],
+            favoriteGames: user.favoriteGames || [],
+            createdAt: user.createdAt,
+            onboardingComplete: user.onboardingComplete === true,
+          },
+        },
+      });
+    } catch (error) {
+      // Remove the uploaded image if updating the profile fails.
+      if (uploadedImage?.public_id) {
+        try {
+          await cloudinary.uploader.destroy(uploadedImage.public_id);
+        } catch (cleanupError) {
+          console.error(
+            'Could not clean up an unsuccessful avatar upload.',
+            cleanupError.message
+          );
+        }
+      }
+
+      return next(error);
+    }
+  }
+);

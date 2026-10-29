@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const app = require('./app');
+const { attachSocketServer } = require('./socket');
 const mongoose = require('mongoose');
 const { connectDatabase } = require('./config/db');
 const { describeMongoError } = require('./config/dbDiagnostics');
@@ -38,7 +39,12 @@ async function connectWithRetry() {
 }
 
 function start() {
-  server = app.listen(port, '0.0.0.0', () => {
+  const http = require('node:http');
+
+  server = http.createServer(app);
+  attachSocketServer(server, app);
+
+  server.listen(port, '0.0.0.0', () => {
     console.info(`Server listening on port ${port}.`);
     void connectWithRetry();
   });

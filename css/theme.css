@@ -270,3 +270,531 @@ dialog.auth-dialog { overflow: auto; overscroll-behavior: contain; padding-top: 
   .mobile-dock { right: 8px; left: 8px; }
   .mobile-dock .nav-item { width: 36px; }
 }
+
+/* ==========================================================
+   ARCADIA POLISH PASS
+   Authentication • Onboarding • Application-wide dark theme
+   Append to the bottom of theme.css
+   ========================================================== */
+
+
+/* ----------------------------------------------------------
+   1. SHARED THEME TOKENS
+   ---------------------------------------------------------- */
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+
+  --void: #080a12;
+  --page-bg: #080a12;
+
+  --ink: #f4f5fb;
+  --text: #f4f5fb;
+
+  --muted: #969bad;
+  --nav-text: #d5d8e5;
+
+  --line: rgb(255 255 255 / 10%);
+  --border: rgb(255 255 255 / 10%);
+
+  --panel: rgb(20 23 38 / 84%);
+  --card: rgb(18 21 34 / 92%);
+
+  --accent: #a99aff;
+  --online: #43d9a0;
+
+  --shadow:
+    0 12px 36px rgb(0 0 0 / 22%);
+
+  --topbar-glass:
+    rgb(10 12 22 / 78%);
+}
+
+
+/* ----------------------------------------------------------
+   2. TRUE APP-WIDE DARK MODE
+   ---------------------------------------------------------- */
+
+html[data-theme="dark"] body {
+  color: var(--ink);
+
+  background:
+    radial-gradient(
+      ellipse at 12% 0%,
+      rgb(115 83 235 / 12%),
+      transparent 34rem
+    ),
+    radial-gradient(
+      ellipse at 100% 30%,
+      rgb(35 161 184 / 7%),
+      transparent 30rem
+    ),
+    linear-gradient(
+      145deg,
+      #0c0e19 0%,
+      #080a12 54%,
+      #0b0d17 100%
+    );
+}
+
+
+/* Common surfaces */
+
+html[data-theme="dark"] .pf-card,
+html[data-theme="dark"] .st-card,
+html[data-theme="dark"] .profile-card,
+html[data-theme="dark"] .settings-panel,
+html[data-theme="dark"] .community-rules,
+html[data-theme="dark"] .community-detail,
+html[data-theme="dark"] .post-card,
+html[data-theme="dark"] .feed-post,
+html[data-theme="dark"] .game-card,
+html[data-theme="dark"] .catalog-card,
+html[data-theme="dark"] .fd-item {
+  color: var(--ink);
+
+  background-color: var(--card);
+
+  border-color: var(--border);
+
+  box-shadow: var(--shadow);
+}
+
+
+/* Inputs, dropdowns and text areas */
+
+html[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]),
+html[data-theme="dark"] textarea,
+html[data-theme="dark"] select {
+  color: var(--ink);
+
+  background-color: #111421;
+
+  border-color: rgb(255 255 255 / 12%);
+}
+
+html[data-theme="dark"] input::placeholder,
+html[data-theme="dark"] textarea::placeholder {
+  color: #858ba0;
+}
+
+html[data-theme="dark"] select option {
+  color: #f4f5fb;
+  background: #111421;
+}
+
+html[data-theme="dark"] input:focus-visible,
+html[data-theme="dark"] textarea:focus-visible,
+html[data-theme="dark"] select:focus-visible {
+  outline: 2px solid rgb(169 154 255 / 78%);
+  outline-offset: 2px;
+
+  border-color: #a99aff;
+}
+
+
+/* Secondary text */
+
+html[data-theme="dark"] .pf-handle,
+html[data-theme="dark"] .pf-empty,
+html[data-theme="dark"] .st-subtitle,
+html[data-theme="dark"] .fd-sub,
+html[data-theme="dark"] .post-meta,
+html[data-theme="dark"] .muted {
+  color: var(--muted);
+}
+
+
+/* Dialogs and modal surfaces */
+
+html[data-theme="dark"] dialog:not(.auth-dialog) {
+  color: var(--ink);
+
+  background: #111421;
+
+  border-color: var(--border);
+}
+
+html[data-theme="dark"] dialog::backdrop {
+  background: rgb(0 0 0 / 72%);
+
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+
+/* Cards and rows that need subtle separation */
+
+html[data-theme="dark"] .st-row,
+html[data-theme="dark"] .comment-line,
+html[data-theme="dark"] .pf-tabs,
+html[data-theme="dark"] .community-owner-tools {
+  border-color: var(--border);
+}
+
+
+/* Interactive hover states */
+
+html[data-theme="dark"] .pf-game:hover,
+html[data-theme="dark"] .pf-tile:hover,
+html[data-theme="dark"] .fd-item:hover,
+html[data-theme="dark"] .st-row:hover {
+  background-color: rgb(169 154 255 / 6%);
+}
+
+
+/* ----------------------------------------------------------
+   3. LOGIN AND SIGNUP
+   ---------------------------------------------------------- */
+
+dialog.auth-dialog {
+  width: min(460px, calc(100vw - 32px));
+
+  max-width: 460px;
+
+  max-height: min(90dvh, 820px);
+
+  padding: 0;
+
+  overflow-x: hidden;
+  overflow-y: auto;
+
+  border: 1px solid rgb(255 255 255 / 13%);
+
+  border-radius: 28px;
+
+  box-shadow:
+    0 36px 110px rgb(0 0 0 / 38%),
+    inset 0 1px 0 rgb(255 255 255 / 9%);
+
+  scrollbar-width: thin;
+}
+
+dialog.auth-dialog::backdrop {
+  background: rgb(5 6 13 / 70%);
+
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.auth-dialog input,
+.auth-dialog select,
+.auth-dialog textarea {
+  width: 100%;
+
+  min-height: 48px;
+
+  padding: 12px 15px;
+
+  border: 1px solid var(--border);
+
+  border-radius: 14px;
+
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    background-color 180ms ease;
+}
+
+.auth-dialog label {
+  display: block;
+
+  margin-bottom: 7px;
+
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+.auth-dialog input:focus,
+.auth-dialog select:focus,
+.auth-dialog textarea:focus {
+  outline: none;
+
+  border-color: var(--accent);
+
+  box-shadow:
+    0 0 0 4px rgb(169 154 255 / 13%);
+}
+
+.auth-switch {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+
+  gap: 7px;
+
+  margin-top: 18px;
+
+  color: var(--muted);
+
+  font-size: 0.9rem;
+}
+
+.auth-switch__button {
+  color: var(--accent);
+
+  font-weight: 750;
+
+  transition:
+    color 180ms ease,
+    opacity 180ms ease;
+}
+
+.auth-switch__button:hover {
+  color: #c0b5ff;
+}
+
+
+/* Primary actions */
+
+html[data-theme="dark"] .button--primary {
+  border: 1px solid rgb(255 255 255 / 15%);
+
+  background:
+    linear-gradient(
+      135deg,
+      #9b87ff,
+      #6f5ce7 65%,
+      #5745c9
+    );
+
+  color: #fff;
+
+  box-shadow:
+    0 8px 24px rgb(110 85 230 / 23%);
+
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    filter 180ms ease;
+}
+
+html[data-theme="dark"] .button--primary:hover {
+  filter: brightness(1.08);
+
+  box-shadow:
+    0 12px 30px rgb(110 85 230 / 33%);
+}
+
+html[data-theme="dark"] .button--primary:active {
+  transform: scale(0.985);
+}
+
+
+/* ----------------------------------------------------------
+   4. ONBOARDING
+   ---------------------------------------------------------- */
+
+.onboarding-content {
+  gap: 11px;
+}
+
+.onboarding-content input:not([type="checkbox"]):not([type="radio"]),
+.onboarding-content textarea {
+  min-height: 48px;
+
+  padding: 13px 15px;
+
+  border: 1px solid var(--border);
+
+  border-radius: 15px;
+}
+
+.onboarding-games {
+  display: flex;
+
+  flex-wrap: wrap;
+
+  align-items: stretch;
+
+  gap: 10px;
+
+  max-height: min(320px, 38dvh);
+
+  padding: 4px;
+
+  overflow-x: hidden;
+  overflow-y: auto;
+
+  overscroll-behavior: contain;
+
+  scrollbar-width: thin;
+}
+
+
+/* Game and interest selection chips */
+
+.interest-chip {
+  position: relative;
+
+  display: inline-flex;
+
+  justify-content: center;
+  align-items: center;
+
+  gap: 8px;
+
+  min-height: 46px;
+
+  padding: 11px 15px;
+
+  border: 1px solid rgb(255 255 255 / 12%);
+
+  border-radius: 15px;
+
+  color: var(--ink);
+
+  background:
+    linear-gradient(
+      145deg,
+      rgb(255 255 255 / 6%),
+      rgb(255 255 255 / 2%)
+    );
+
+  font-size: 0.9rem;
+  font-weight: 650;
+
+  cursor: pointer;
+
+  transition:
+    background 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms ease;
+}
+
+.interest-chip:hover {
+  border-color: rgb(169 154 255 / 55%);
+
+  background: rgb(169 154 255 / 9%);
+
+  transform: translateY(-1px);
+}
+
+.interest-chip.is-selected {
+  border-color: #a99aff;
+
+  color: #fff;
+
+  background:
+    linear-gradient(
+      135deg,
+      rgb(137 111 255 / 27%),
+      rgb(66 177 217 / 12%)
+    );
+
+  box-shadow:
+    inset 0 0 0 1px rgb(169 154 255 / 15%),
+    0 5px 18px rgb(109 87 220 / 12%);
+}
+
+.interest-chip:focus-visible {
+  outline: 2px solid #b8aaff;
+
+  outline-offset: 3px;
+}
+
+
+/* Selected state should remain visible without hover */
+
+.interest-chip.is-selected:hover {
+  border-color: #c0b5ff;
+
+  background:
+    linear-gradient(
+      135deg,
+      rgb(137 111 255 / 35%),
+      rgb(66 177 217 / 16%)
+    );
+}
+
+
+/* ----------------------------------------------------------
+   5. LIGHT THEME COMPATIBILITY
+   ---------------------------------------------------------- */
+
+html[data-theme="light"] .interest-chip {
+  color: #242238;
+
+  border-color: rgb(40 35 75 / 12%);
+
+  background:
+    linear-gradient(
+      145deg,
+      rgb(255 255 255 / 98%),
+      rgb(246 245 253 / 95%)
+    );
+}
+
+html[data-theme="light"] .interest-chip:hover {
+  border-color: rgb(90 63 214 / 45%);
+
+  background: rgb(90 63 214 / 6%);
+}
+
+html[data-theme="light"] .interest-chip.is-selected {
+  color: #39268c;
+
+  border-color: #8c78ed;
+
+  background:
+    linear-gradient(
+      135deg,
+      rgb(143 119 255 / 18%),
+      rgb(66 177 217 / 9%)
+    );
+
+  box-shadow:
+    inset 0 0 0 1px rgb(143 119 255 / 10%);
+}
+
+
+/* ----------------------------------------------------------
+   6. ACCESSIBILITY AND MOTION
+   ---------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-dialog,
+  .auth-dialog *,
+  .interest-chip,
+  .auth-switch__button,
+  .button--primary {
+    animation-duration: 0.01ms !important;
+
+    animation-iteration-count: 1 !important;
+
+    scroll-behavior: auto !important;
+
+    transition-duration: 0.01ms !important;
+  }
+}
+
+
+/* ----------------------------------------------------------
+   7. SMALL-SCREEN REFINEMENTS
+   ---------------------------------------------------------- */
+
+@media (max-width: 520px) {
+  dialog.auth-dialog {
+    width: calc(100vw - 24px);
+
+    max-width: none;
+
+    max-height: 90dvh;
+
+    border-radius: 23px;
+  }
+
+  .onboarding-games {
+    max-height: 34dvh;
+  }
+
+  .interest-chip {
+    min-height: 44px;
+
+    padding: 10px 12px;
+
+    font-size: 0.86rem;
+  }
+}

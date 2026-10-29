@@ -6,6 +6,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env.test.local') }
 const mongoose = require('mongoose');
 const app = require('../src/app');
 const User = require('../src/models/User');
+const Friendship = require('../src/models/Friendship');
 const Game = require('../src/models/Game');
 const Community = require('../src/models/Community');
 const Membership = require('../src/models/Membership');

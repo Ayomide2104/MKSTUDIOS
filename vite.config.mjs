@@ -1,16 +1,26 @@
 import { defineConfig } from 'vite';
 
-const apiTarget = process.env.API_PROXY_TARGET || 'http://localhost:3000';
+const apiTarget = process.env.API_PROXY_TARGET || 'http://127.0.0.1:3000';
 
 export default defineConfig({
   server: {
     host: '127.0.0.1',
     port: Number(process.env.FRONTEND_PORT || 5174),
     strictPort: true,
+
+    allowedHosts: [
+      'rule-spent-contort.ngrok-free.dev'
+    ],
+
     proxy: {
       '/api': {
         target: apiTarget,
         changeOrigin: true
+      },
+      '/socket.io': {
+        target: apiTarget,
+        changeOrigin: true,
+        ws: true
       }
     }
   }

@@ -1,3 +1,4 @@
+import { createMessaging } from './messaging.js';
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const dialog = $('#auth-dialog');
@@ -8,6 +9,24 @@ let currentUser = null;
 let returnTo = null;
 let destinationChoicesLoaded = false;
 let csrfToken = null;
+let messaging = null;
+
+function syncMessagingSession() {
+  if (!messaging) {
+    messaging = createMessaging({
+      api,
+      getCurrentUser: () => currentUser,
+      toast
+    });
+  }
+
+  if (currentUser) {
+  messaging.init();
+  messaging.connect();
+} else {
+  messaging.disconnect();
+}
+}
 let selectedCommunity = null;
 
 function applyTheme(theme, persist = true) {
@@ -53,9 +72,22 @@ function selectView(view) {
   if (view === 'groups') loadCommunities();
   if (view === 'updates') loadUpdates();
   if (view === 'profile') renderProfile();
+  if (view === 'friends') void renderFriends();
+  if (view === 'inbox') messaging?.openInbox();
 }
 
 $$('[data-view]').forEach((button) => button.addEventListener('click', () => selectView(button.dataset.view)));
+$$('[data-action="open-inbox"]').forEach((button) => {
+  button.addEventListener('click', () => {
+    if (!currentUser) {
+      openAuth();
+      toast('Sign in to view your messages.');
+      return;
+    }
+
+    selectView('inbox');
+  });
+});
 $$('[data-view-link]').forEach((button) => button.addEventListener('click', () => selectView(button.dataset.viewLink)));
 
 const searchToggle = $('#mobile-search-toggle');
@@ -108,7 +140,11 @@ $$('[data-action="signin"], #auth-avatar').forEach((button) => button.addEventLi
 $('#auth-open').addEventListener('click', async () => {
   if (!currentUser) return openAuth();
   try { await api('/auth/logout', { method: 'POST' }); } catch { /* The local session is still cleared. */ }
-  currentUser = null; csrfToken = null; updateSignedInUI(); toast('You’re signed out.');
+  currentUser = null;
+  csrfToken = null;
+  syncMessagingSession();
+  updateSignedInUI();
+  toast('You’re signed out.');
 });
 $$('[data-action="compose"]').forEach((button) => button.addEventListener('click', () => { if (!currentUser) return openAuth('compose'); composePost(); if (button.textContent.trim() === 'Photo') photoInput.click(); }));
 
@@ -145,58 +181,168 @@ photoInput.addEventListener('change', async () => {
 $('#composer-game').addEventListener('click', () => { composePost(); $('#composer-destination')?.focus(); });
 $('#composer-form').addEventListener('submit', async (event) => {
   event.preventDefault();
+
   const body = $('#composer-body').value.trim();
   const choice = $('#composer-destination')?.value || 'general';
   const [type, target] = choice.split(':');
   const submit = $('button[type="submit"]', event.currentTarget);
-  if (!body) { $('#composer-error').textContent = 'Write a little something first.'; return; }
-  submit.disabled = true;
-  const communitySlug=selectedCommunity?.slug;
-  const pending=renderPost({_id:`pending-${Date.now()}`,author:currentUser,body,createdAt:new Date().toISOString(),likeCount:0,commentCount:0,repostCount:0});pending.classList.add('is-pending');pending.querySelectorAll('button').forEach((button)=>button.disabled=true);
-  const host=communitySlug?$('#view-groups .post-list'):$('#post-list');host?.prepend(pending);
-  try {
-    if (communitySlug) await api(`/communities/${communitySlug}/posts`, { method: 'POST', body: JSON.stringify({ body }) });
-    else await api('/posts', { method: 'POST', body: JSON.stringify({ body, destinations: [{ type, ...(target ? { target } : {}) }] }) });
-    composerDialog.close(); event.currentTarget.reset(); $('#composer-count').textContent = '0 / 500';
-    toast('Your post is live.'); if(communitySlug)await openCommunity(communitySlug);else await loadFeed();
-  } catch (error) { pending.remove();$('#composer-error').textContent = error.message; }
-  finally { submit.disabled = false; }
-});
-$$('[data-auth-mode]').forEach((button) => button.addEventListener('click', () => setAuthMode(button.dataset.authMode)));
 
-function setAuthMode(mode) {
-  authMode = mode;
-  $$('[data-auth-mode]').forEach((button) => {
-    const active = button.dataset.authMode === mode;
-    button.classList.toggle('is-current', active);
-    button.setAttribute('aria-selected', String(active));
+  // Get the selected image from the photo picker.
+  const photoInput = $('#composer-photo');
+  const photo = photoInput?.files?.[0] || null;
+
+  // Allow text-only, photo-only, and combined posts.
+  if (!body && !photo) {
+    $('#composer-error').textContent = 'Write something or add a photo.';
+    return;
+  }
+
+  if (body.length > 500) {
+    $('#composer-error').textContent =
+      'Post text cannot exceed 500 characters.';
+    return;
+  }
+
+  submit.disabled = true;
+  $('#composer-error').textContent = '';
+
+  const communitySlug = selectedCommunity?.slug;
+
+  const pending = renderPost({
+    _id: `pending-${Date.now()}`,
+    author: currentUser,
+    body,
+    media: [],
+    createdAt: new Date().toISOString(),
+    likeCount: 0,
+    commentCount: 0,
+    repostCount: 0,
   });
-  $('#auth-title').textContent = mode === 'login' ? 'Get in the game.' : 'Join your people.';
-  $('#auth-password').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
-  $('#auth-password').placeholder = mode === 'login' ? 'Your password' : 'At least 10 characters';
-  let confirm = $('#auth-confirm');
-  if (mode === 'register' && !confirm) {
-    const label = document.createElement('label'); label.htmlFor = 'auth-confirm'; label.textContent = 'Confirm password';
-    confirm = document.createElement('input'); confirm.id = 'auth-confirm'; confirm.type = 'password'; confirm.autocomplete = 'new-password'; confirm.placeholder = 'Type it again'; confirm.required = true;
-    $('#auth-error').before(label, confirm);
+
+  pending.classList.add('is-pending');
+  pending.querySelectorAll('button').forEach((button) => {
+    button.disabled = true;
+  });
+
+  const host = communitySlug
+    ? $('#view-groups .post-list')
+    : $('#post-list');
+
+  host?.prepend(pending);
+
+  try {
+    // Prepare the post payload.
+    const formData = new FormData();
+
+    formData.append('body', body);
+
+    formData.append(
+      'destinations',
+      JSON.stringify([
+        {
+          type: communitySlug ? 'community' : type,
+          ...(
+            communitySlug
+              ? { target: communitySlug }
+              : target
+                ? { target }
+                : {}
+          ),
+        },
+      ])
+    );
+
+    if (photo) {
+      formData.append('photo', photo);
+    }
+
+    // Send the image and post details as multipart/form-data.
+    // The browser automatically sets the multipart boundary.
+    await api('/posts', {
+      method: 'POST',
+      body: formData,
+    });
+
+    composerDialog.close();
+
+    event.currentTarget.reset();
+
+    $('#composer-count').textContent = '0 / 500';
+
+    // Clear any temporary photo preview if the existing UI uses one.
+    if (typeof photoUrl !== 'undefined' && photoUrl) {
+      URL.revokeObjectURL(photoUrl);
+      photoUrl = null;
+    }
+
+    const photoPreview = $('#photo-preview');
+
+    if (photoPreview) {
+      photoPreview.replaceChildren();
+      photoPreview.hidden = true;
+    }
+
+    toast('Your post is live.');
+
+    if (communitySlug) {
+      await openCommunity(communitySlug);
+    } else {
+      await loadFeed();
+    }
+  } catch (error) {
+    pending.remove();
+
+    $('#composer-error').textContent =
+      error.message || 'Could not publish your post. Please try again.';
+  } finally {
+    submit.disabled = false;
   }
-  if (confirm) {
-    confirm.previousElementSibling.hidden = mode !== 'register';
-    confirm.hidden = mode !== 'register';
-    confirm.required = mode === 'register';
-  }
-  $('#auth-error').textContent = '';
-}
+});
+
+$$('[data-auth-mode]').forEach((button) =>
+  button.addEventListener('click', () =>
+    setAuthMode(button.dataset.authMode)
+  )
+);
 
 async function api(path, options = {}) {
-  const mutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes((options.method || 'GET').toUpperCase());
+  const method = (options.method || 'GET').toUpperCase();
+
+  const mutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
+
+  const isFormData =
+    typeof FormData !== 'undefined' &&
+    options.body instanceof FormData;
+
+  const headers = {
+    // Let the browser set the multipart boundary for FormData.
+    ...(
+      options.body && !isFormData
+        ? { 'Content-Type': 'application/json' }
+        : {}
+    ),
+
+    ...(mutating && csrfToken
+      ? { 'X-CSRF-Token': csrfToken }
+      : {}),
+
+    ...options.headers,
+  };
+
   const response = await fetch(`/api${path}`, {
     credentials: 'include',
     ...options,
-    headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(mutating && csrfToken ? { 'X-CSRF-Token': csrfToken } : {}), ...options.headers }
+    headers,
   });
+
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error || 'Something went wrong. Please try again.');
+
+  if (!response.ok) {
+    throw new Error(
+      body.error || 'Something went wrong. Please try again.'
+    );
+  }
+
   return body.data ?? body;
 }
 
@@ -216,6 +362,7 @@ authForm.addEventListener('submit', async (event) => {
     const result = await api(`/auth/${authMode}`, { method: 'POST', body: JSON.stringify({ username, password }) });
     currentUser = result.user;
     csrfToken = result.csrfToken;
+    syncMessagingSession();
     updateSignedInUI();
     dialog.close();
     authForm.reset();
@@ -280,6 +427,7 @@ async function restoreSession() {
     const result = await api('/auth/me');
     currentUser = result.user;
     csrfToken = result.csrfToken;
+    syncMessagingSession();
     updateSignedInUI();
     if (currentUser && !currentUser.onboardingComplete) startOnboarding();
   } catch {
@@ -288,38 +436,153 @@ async function restoreSession() {
   await loadFeed();
 }
 
+
 let feedCursor = null;
 let activeFeed = 'for-you';
+let feedLoading = false;
+let feedObserver = null;
+let feedGeneration = 0;
+
 async function loadFeed(filter = activeFeed, cursor = null) {
+  if (feedLoading) return;
+  if (cursor && !feedCursor) return;
+
   const state = $('#feed-state');
   const list = $('#post-list');
+
   activeFeed = filter;
-  if (!cursor) { feedCursor = null; state.hidden = false; state.innerHTML = '<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-posts.svg" alt=""/><h2>Finding your people…</h2><p>Loading the latest conversations.</p>'; list.replaceChildren(); }
-  let more = $('#feed-load-more');
-  if (!more) { more = document.createElement('button'); more.id = 'feed-load-more'; more.className = 'button'; more.type = 'button'; more.textContent = 'Load more'; more.addEventListener('click', () => loadFeed(activeFeed, feedCursor)); list.after(more); }
-  more.hidden = true;
+
+  const isInitialLoad = !cursor;
+
+  if (isInitialLoad) {
+    feedGeneration++;
+    feedCursor = null;
+
+    if (feedObserver) {
+      feedObserver.disconnect();
+      feedObserver = null;
+    }
+
+    state.hidden = false;
+    state.innerHTML = '<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-posts.svg" alt=""/><h2>Finding your people…</h2><p>Loading the latest conversations.</p>';
+    list.replaceChildren();
+  }
+
+  const generation = feedGeneration;
+
+  let sentinel = $('#feed-load-more');
+
+  if (!sentinel) {
+    sentinel = document.createElement('div');
+    sentinel.id = 'feed-load-more';
+    sentinel.setAttribute('aria-live', 'polite');
+    sentinel.className = 'feed-loading-sentinel';
+    sentinel.innerHTML = '<span class="feed-loading-sentinel__text">Loading more posts…</span>';
+    list.after(sentinel);
+  }
+
+  sentinel.hidden = true;
+
+  feedLoading = true;
+
   try {
-    const result = await api(`/posts?feed=${encodeURIComponent(filter)}&limit=20${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
-    list.append(...(result.items || []).map(renderPost));
-    feedCursor = result.nextCursor;
-    more.hidden = !feedCursor; more.disabled = false;
-    if (!result.items?.length && !cursor && result.unavailable) {
+    const result = await api(
+      `/posts?feed=${encodeURIComponent(filter)}&limit=20${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`
+    );
+
+    if (generation !== feedGeneration) return;
+
+    const items = result.items || [];
+
+    list.append(...items.map(renderPost));
+
+    feedCursor = result.nextCursor || null;
+
+    if (!items.length && !cursor && result.unavailable) {
       state.innerHTML = '<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-posts.svg" alt=""/><h2>Friends feed is coming later</h2><p>Friend connections are part of the next approved phase.</p>';
       return;
     }
-    if (!result.items?.length && !cursor) {
+
+    if (!items.length && !cursor) {
       state.innerHTML = '<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-posts.svg" alt=""/><h2>Your circle starts here</h2><p>There are no public posts yet. Start a conversation when you’re ready.</p>';
+
       if (currentUser) {
         const button = document.createElement('button');
-        button.className = 'button button--primary'; button.type = 'button'; button.textContent = 'Write a post'; button.addEventListener('click', composePost);
+        button.className = 'button button--primary';
+        button.type = 'button';
+        button.textContent = 'Write a post';
+        button.addEventListener('click', composePost);
         state.append(button);
       } else {
-        const button = document.createElement('button'); button.className = 'button button--primary'; button.type = 'button'; button.textContent = 'Join the circle'; button.addEventListener('click', () => openAuth()); state.append(button);
+        const button = document.createElement('button');
+        button.className = 'button button--primary';
+        button.type = 'button';
+        button.textContent = 'Join the circle';
+        button.addEventListener('click', () => openAuth());
+        state.append(button);
       }
-    } else state.hidden = list.children.length > 0;
+    } else {
+      state.hidden = list.children.length > 0;
+    }
+
+    if (feedCursor) {
+      sentinel.hidden = false;
+      sentinel.innerHTML = '<span class="feed-loading-sentinel__text">Scroll for more</span>';
+
+      if (!feedObserver) {
+        feedObserver = new IntersectionObserver((entries) => {
+          if (
+            entries.some((entry) => entry.isIntersecting) &&
+            !feedLoading &&
+            feedCursor
+          ) {
+            const nextCursor = feedCursor;
+            loadFeed(activeFeed, nextCursor);
+          }
+        }, {
+          root: null,
+          rootMargin: '500px 0px',
+          threshold: 0
+        });
+
+        feedObserver.observe(sentinel);
+      }
+    } else {
+      sentinel.hidden = true;
+      sentinel.innerHTML = '<span class="feed-loading-sentinel__text">You’re all caught up ✨</span>';
+
+      if (feedObserver) {
+        feedObserver.disconnect();
+        feedObserver = null;
+      }
+    }
   } catch {
-    state.innerHTML = '<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-posts.svg" alt=""/><h2>Couldn’t load the feed</h2><p>Check your connection and try again.</p>';
-    const retry = document.createElement('button'); retry.className = 'button button--primary'; retry.type = 'button'; retry.textContent = 'Try again'; retry.addEventListener('click', () => loadFeed(filter, cursor)); state.append(retry);
+    if (generation !== feedGeneration) return;
+
+    if (cursor) {
+      sentinel.hidden = false;
+      sentinel.innerHTML = '<button class="button button--primary" type="button">Couldn’t load more. Try again</button>';
+
+      sentinel.querySelector('button').addEventListener('click', () => {
+        if (!feedLoading && feedCursor) {
+          loadFeed(activeFeed, feedCursor);
+        }
+      });
+    } else {
+      state.hidden = false;
+      state.innerHTML = '<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-posts.svg" alt=""/><h2>Couldn’t load the feed</h2><p>Check your connection and try again.</p>';
+
+      const retry = document.createElement('button');
+      retry.className = 'button button--primary';
+      retry.type = 'button';
+      retry.textContent = 'Try again';
+      retry.addEventListener('click', () => loadFeed(filter));
+      state.append(retry);
+    }
+  } finally {
+    if (generation === feedGeneration) {
+      feedLoading = false;
+    }
   }
 }
 
@@ -336,53 +599,446 @@ function iconSvg(name) {
 }
 
 function renderPost(post) {
-  const article = document.createElement('article'); article.className = 'post-card glass-panel'; article.id = `post-${post._id}`; article.dataset.postId = post._id;
-  const header = document.createElement('div'); header.className = 'post-card__head';
-  const avatar = document.createElement('span'); avatar.className = 'avatar post-avatar'; avatar.textContent = (post.author?.displayName || post.author?.username || '?')[0].toUpperCase();
-  if (post.author?.avatar) avatar.classList.add(post.author.avatar);
-  const meta = document.createElement('div'); meta.className = 'post-meta';
-  const name = document.createElement('strong'); name.textContent = post.author?.displayName || post.author?.username || 'Player'; name.tabIndex = 0; name.role = 'link';
-  name.addEventListener('click', () => { selectView('profile'); void renderProfile(post.author?.username); });
-  name.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); name.click(); } });
-  const handle = document.createElement('span'); handle.textContent = `@${post.author?.username || 'player'} · ${new Date(post.createdAt).toLocaleDateString()}`; meta.append(name, handle); header.append(avatar, meta);
-  for (const destination of post.destinations || []) if (destination.type === 'game' || destination.type === 'community') { const tag = document.createElement('span'); tag.className = destination.type === 'game' ? 'game-pill' : 'community-pill'; tag.textContent = `${destination.type === 'game' ? 'Game' : 'Group'} · ${destination.target}`; header.append(tag); }
-  const body = document.createElement('p'); body.className = 'post-card__body'; body.textContent = post.body;
-  const summary = document.createElement('div'); summary.className = 'comments-summary';
-  const heartSummary = document.createElement('span'); heartSummary.className = 'summary-heart'; heartSummary.append(iconSvg('heart'));
-  const likeSummary = document.createElement('span'); likeSummary.textContent = String(post.likeCount || 0);
-  const divider = document.createElement('span'); divider.textContent = '·'; divider.setAttribute('aria-hidden', 'true');
-  const commentSummary = document.createElement('button'); commentSummary.type = 'button'; commentSummary.textContent = `${post.commentCount || 0} ${post.commentCount === 1 ? 'comment' : 'comments'}`; commentSummary.setAttribute('aria-label', `View ${post.commentCount || 0} comments`);
-  summary.append(heartSummary, likeSummary, divider, commentSummary);
-  const actions = document.createElement('div'); actions.className = 'post-actions';
-  const makeButton = (name, label, count = null) => { const button = document.createElement('button'); button.type = 'button'; button.dataset.actionName = name; button.setAttribute('aria-label', label); button.append(iconSvg(name)); if (count !== null) { const number = document.createElement('span'); number.className = 'action-count'; number.textContent = String(count); button.append(number); } const text = document.createElement('span'); text.className = 'action-label'; text.textContent = label; button.append(text); return button; };
-  const likeButton = makeButton('heart', 'Like', post.likeCount || 0); likeButton.setAttribute('aria-pressed', String(post.liked === true));
-  const commentButton = makeButton('comment', 'Comments', post.commentCount || 0);
-  const repostButton = makeButton('repost', 'Repost', post.repostCount || 0); repostButton.setAttribute('aria-pressed', String(post.reposted === true));
+  const article = document.createElement('article');
+  article.className = 'post-card glass-panel';
+  article.id = `post-${post._id}`;
+  article.dataset.postId = post._id;
+
+  // Post header
+  const header = document.createElement('div');
+  header.className = 'post-card__head';
+
+  const avatar = document.createElement('span');
+  avatar.className = 'avatar post-avatar';
+  avatar.textContent = (
+    post.author?.displayName ||
+    post.author?.username ||
+    '?'
+  )[0].toUpperCase();
+
+  if (post.author?.avatar) {
+    avatar.classList.add(post.author.avatar);
+  }
+
+  const meta = document.createElement('div');
+  meta.className = 'post-meta';
+
+  const name = document.createElement('strong');
+  name.textContent =
+    post.author?.displayName ||
+    post.author?.username ||
+    'Player';
+
+  name.tabIndex = 0;
+  name.setAttribute('role', 'link');
+
+  name.addEventListener('click', () => {
+    selectView('profile');
+    void renderProfile(post.author?.username);
+  });
+
+  name.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      name.click();
+    }
+  });
+
+  const handle = document.createElement('span');
+
+  handle.textContent =
+    `@${post.author?.username || 'player'} · ` +
+    new Date(post.createdAt).toLocaleDateString();
+
+  meta.append(name, handle);
+  header.append(avatar, meta);
+
+  // Game and community destination tags
+  for (const destination of post.destinations || []) {
+    if (
+      destination.type === 'game' ||
+      destination.type === 'community'
+    ) {
+      const tag = document.createElement('span');
+
+      tag.className =
+        destination.type === 'game'
+          ? 'game-pill'
+          : 'community-pill';
+
+      tag.textContent =
+        `${destination.type === 'game' ? 'Game' : 'Group'} · ` +
+        destination.target;
+
+      header.append(tag);
+    }
+  }
+
+  // Post text
+  let body = null;
+
+  if (typeof post.body === 'string' && post.body.trim()) {
+    body = document.createElement('p');
+    body.className = 'post-card__body';
+    body.textContent = post.body;
+  }
+
+  // Uploaded images
+  let mediaGallery = null;
+
+  const images = Array.isArray(post.media)
+    ? post.media.filter(
+        (item) =>
+          item &&
+          item.type === 'image' &&
+          typeof item.url === 'string' &&
+          /^https:\/\//i.test(item.url)
+      )
+    : [];
+
+  if (images.length) {
+    mediaGallery = document.createElement('div');
+    mediaGallery.className = 'post-media';
+
+    if (images.length > 1) {
+      mediaGallery.classList.add('post-media--multiple');
+    }
+
+    images.forEach((image, index) => {
+      const imageLink = document.createElement('a');
+
+      imageLink.className = 'post-media__item';
+      imageLink.href = image.url;
+      imageLink.target = '_blank';
+      imageLink.rel = 'noopener noreferrer';
+      imageLink.setAttribute(
+        'aria-label',
+        `Open post image ${index + 1} in a new tab`
+      );
+
+      const img = document.createElement('img');
+
+      img.className = 'post-media__image';
+      img.src = image.url;
+      img.alt =
+        post.body?.trim()
+          ? `Image attached to post: ${post.body.trim().slice(0, 120)}`
+          : `Image attached to post by ${post.author?.displayName || post.author?.username || 'Player'}`;
+
+      img.loading = 'lazy';
+      img.decoding = 'async';
+
+      if (
+        Number.isFinite(image.width) &&
+        image.width > 0 &&
+        Number.isFinite(image.height) &&
+        image.height > 0
+      ) {
+        img.width = image.width;
+        img.height = image.height;
+      }
+
+      img.addEventListener('error', () => {
+        imageLink.classList.add('post-media__item--error');
+        img.alt = 'Image unavailable';
+      }, { once: true });
+
+      imageLink.append(img);
+      mediaGallery.append(imageLink);
+    });
+  }
+
+  // Engagement summary
+  const summary = document.createElement('div');
+  summary.className = 'comments-summary';
+
+  const heartSummary = document.createElement('span');
+  heartSummary.className = 'summary-heart';
+  heartSummary.append(iconSvg('heart'));
+
+  const likeSummary = document.createElement('span');
+  likeSummary.textContent = String(post.likeCount || 0);
+
+  const divider = document.createElement('span');
+  divider.textContent = '·';
+  divider.setAttribute('aria-hidden', 'true');
+
+  const commentSummary = document.createElement('button');
+  commentSummary.type = 'button';
+
+  commentSummary.textContent =
+    `${post.commentCount || 0} ` +
+    `${post.commentCount === 1 ? 'comment' : 'comments'}`;
+
+  commentSummary.setAttribute(
+    'aria-label',
+    `View ${post.commentCount || 0} comments`
+  );
+
+  summary.append(
+    heartSummary,
+    likeSummary,
+    divider,
+    commentSummary
+  );
+
+  // Post action buttons
+  const actions = document.createElement('div');
+  actions.className = 'post-actions';
+
+  const makeButton = (name, label, count = null) => {
+    const button = document.createElement('button');
+
+    button.type = 'button';
+    button.dataset.actionName = name;
+    button.setAttribute('aria-label', label);
+    button.append(iconSvg(name));
+
+    if (count !== null) {
+      const number = document.createElement('span');
+
+      number.className = 'action-count';
+      number.textContent = String(count);
+
+      button.append(number);
+    }
+
+    const text = document.createElement('span');
+
+    text.className = 'action-label';
+    text.textContent = label;
+
+    button.append(text);
+
+    return button;
+  };
+
+  const likeButton = makeButton(
+    'heart',
+    'Like',
+    post.likeCount || 0
+  );
+
+  likeButton.setAttribute(
+    'aria-pressed',
+    String(post.liked === true)
+  );
+
+  const commentButton = makeButton(
+    'comment',
+    'Comments',
+    post.commentCount || 0
+  );
+
+  const repostButton = makeButton(
+    'repost',
+    'Repost',
+    post.repostCount || 0
+  );
+
+  repostButton.setAttribute(
+    'aria-pressed',
+    String(post.reposted === true)
+  );
+
   const shareButton = makeButton('share', 'Share');
-  const updateCount = (button, value) => { $('.action-count', button).textContent = String(value); };
-  const updateComments = (value) => { post.commentCount = value; updateCount(commentButton, value); commentSummary.textContent = `${value} ${value === 1 ? 'comment' : 'comments'}`; commentSummary.setAttribute('aria-label', `View ${value} comments`); };
-  const updateLikes = (value) => { post.likeCount = value; updateCount(likeButton, value); likeSummary.textContent = String(value); };
-  const showComments = () => openComments(post, document.activeElement);
-  commentButton.addEventListener('click', showComments); commentSummary.addEventListener('click', showComments);
+
+  const updateCount = (button, value) => {
+    const counter = $('.action-count', button);
+
+    if (counter) {
+      counter.textContent = String(value);
+    }
+  };
+
+  const updateComments = (value) => {
+    post.commentCount = value;
+
+    updateCount(commentButton, value);
+
+    commentSummary.textContent =
+      `${value} ${value === 1 ? 'comment' : 'comments'}`;
+
+    commentSummary.setAttribute(
+      'aria-label',
+      `View ${value} comments`
+    );
+  };
+
+  const updateLikes = (value) => {
+    post.likeCount = value;
+
+    updateCount(likeButton, value);
+    likeSummary.textContent = String(value);
+  };
+
+  const showComments = () => {
+    openComments(post, document.activeElement);
+  };
+
+  commentButton.addEventListener('click', showComments);
+  commentSummary.addEventListener('click', showComments);
+
+  // Like
   likeButton.addEventListener('click', async () => {
-    if (!currentUser) return openAuth({ type: 'like', id: post._id });
-    const was = likeButton.getAttribute('aria-pressed') === 'true'; const previous = Number(post.likeCount || 0); const next = Math.max(0, previous + (was ? -1 : 1));
-    likeButton.setAttribute('aria-pressed', String(!was)); updateLikes(next); likeButton.classList.toggle('is-pop', !was); window.setTimeout(() => likeButton.classList.remove('is-pop'), 320); likeButton.disabled = true;
-    try { const result = await api(`/posts/${post._id}/like`, { method: was ? 'DELETE' : 'POST' }); likeButton.setAttribute('aria-pressed', String(result.liked)); updateLikes(result.likeCount); }
-    catch (error) { likeButton.setAttribute('aria-pressed', String(was)); updateLikes(previous); toast(error.message); }
-    finally { likeButton.disabled = false; }
+    if (!currentUser) {
+      return openAuth({
+        type: 'like',
+        id: post._id,
+      });
+    }
+
+    const was =
+      likeButton.getAttribute('aria-pressed') === 'true';
+
+    const previous = Number(post.likeCount || 0);
+
+    const next = Math.max(
+      0,
+      previous + (was ? -1 : 1)
+    );
+
+    likeButton.setAttribute(
+      'aria-pressed',
+      String(!was)
+    );
+
+    updateLikes(next);
+
+    likeButton.classList.toggle('is-pop', !was);
+
+    window.setTimeout(() => {
+      likeButton.classList.remove('is-pop');
+    }, 320);
+
+    likeButton.disabled = true;
+
+    try {
+      const result = await api(
+        `/posts/${post._id}/like`,
+        {
+          method: was ? 'DELETE' : 'POST',
+        }
+      );
+
+      likeButton.setAttribute(
+        'aria-pressed',
+        String(result.liked)
+      );
+
+      updateLikes(result.likeCount);
+    } catch (error) {
+      likeButton.setAttribute(
+        'aria-pressed',
+        String(was)
+      );
+
+      updateLikes(previous);
+      toast(error.message);
+    } finally {
+      likeButton.disabled = false;
+    }
   });
+
+  // Repost
   repostButton.addEventListener('click', async () => {
-    if (!currentUser) return openAuth({ type: 'repost', id: post._id });
-    const was = repostButton.getAttribute('aria-pressed') === 'true'; const previous = Number(post.repostCount || 0); updateCount(repostButton, Math.max(0, previous + (was ? -1 : 1))); repostButton.setAttribute('aria-pressed', String(!was)); repostButton.disabled = true;
-    try { const result = await api(`/posts/${post._id}/repost`, { method: was ? 'DELETE' : 'POST' }); post.repostCount = result.repostCount; updateCount(repostButton, result.repostCount); repostButton.setAttribute('aria-pressed', String(result.reposted)); toast(result.reposted ? 'Reposted to your circle.' : 'Repost removed.'); }
-    catch (error) { repostButton.setAttribute('aria-pressed', String(was)); post.repostCount = previous; updateCount(repostButton, previous); toast(error.message); }
-    finally { repostButton.disabled = false; }
+    if (!currentUser) {
+      return openAuth({
+        type: 'repost',
+        id: post._id,
+      });
+    }
+
+    const was =
+      repostButton.getAttribute('aria-pressed') === 'true';
+
+    const previous = Number(post.repostCount || 0);
+
+    updateCount(
+      repostButton,
+      Math.max(0, previous + (was ? -1 : 1))
+    );
+
+    repostButton.setAttribute(
+      'aria-pressed',
+      String(!was)
+    );
+
+    repostButton.disabled = true;
+
+    try {
+      const result = await api(
+        `/posts/${post._id}/repost`,
+        {
+          method: was ? 'DELETE' : 'POST',
+        }
+      );
+
+      post.repostCount = result.repostCount;
+
+      updateCount(repostButton, result.repostCount);
+
+      repostButton.setAttribute(
+        'aria-pressed',
+        String(result.reposted)
+      );
+
+      toast(
+        result.reposted
+          ? 'Reposted to your circle.'
+          : 'Repost removed.'
+      );
+    } catch (error) {
+      repostButton.setAttribute(
+        'aria-pressed',
+        String(was)
+      );
+
+      post.repostCount = previous;
+      updateCount(repostButton, previous);
+
+      toast(error.message);
+    } finally {
+      repostButton.disabled = false;
+    }
   });
-  shareButton.addEventListener('click', async () => { const link = new URL(location.href); link.hash = `post/${post._id}`; try { await navigator.clipboard.writeText(link.toString()); toast('Post link copied.'); } catch { toast('Could not copy the post link.'); } });
-  actions.append(likeButton, commentButton, repostButton, shareButton);
-  article.append(header, body, summary, actions);
+
+  // Share
+  shareButton.addEventListener('click', async () => {
+    const link = new URL(location.href);
+
+    link.hash = `post/${post._id}`;
+
+    try {
+      await navigator.clipboard.writeText(link.toString());
+      toast('Post link copied.');
+    } catch {
+      toast('Could not copy the post link.');
+    }
+  });
+
+  actions.append(
+    likeButton,
+    commentButton,
+    repostButton,
+    shareButton
+  );
+
+  // Assemble the post in reading order.
+  article.append(header);
+
+  if (body) {
+    article.append(body);
+  }
+
+  if (mediaGallery) {
+    article.append(mediaGallery);
+  }
+
+  article.append(summary, actions);
+
   article._updateComments = updateComments;
+
   return article;
 }
 
@@ -637,60 +1293,1061 @@ async function loadUpdates() {
 
 function startOnboarding() {
   let dialogNode = $('#onboarding-dialog');
+
   if (!dialogNode) {
-    dialogNode = document.createElement('dialog'); dialogNode.id = 'onboarding-dialog'; dialogNode.className = 'auth-dialog glass-panel';
-    dialogNode.setAttribute('aria-labelledby', 'onboarding-title'); document.body.append(dialogNode);
+    dialogNode = document.createElement('dialog');
+    dialogNode.id = 'onboarding-dialog';
+    dialogNode.className = 'auth-dialog glass-panel';
+    dialogNode.setAttribute('aria-labelledby', 'onboarding-title');
+    document.body.append(dialogNode);
   }
-  const state = { step: 2, genres: [...(currentUser.genres || [])], games: [...(currentUser.favoriteGames || [])], displayName: currentUser.displayName || '', bio: currentUser.bio || '', avatar: currentUser.avatar || 'gradient-violet' };
-  const genreOptions = [['sports','Sports & football'],['fps','FPS & tactical shooters'],['rpg','RPG & action RPG'],['battle-royale','Battle royale'],['racing','Racing'],['strategy','Strategy'],['fighting','Fighting'],['simulation','Simulation'],['adventure','Adventure'],['party','Casual & party']];
+
+  const state = {
+    step: 2,
+    genres: [...(currentUser.genres || [])],
+    games: [...(currentUser.favoriteGames || [])],
+    displayName: currentUser.displayName || '',
+    bio: currentUser.bio || '',
+    avatar: currentUser.avatar || 'gradient-violet',
+    photo: null,
+    previewUrl: null,
+  };
+
+  const genreOptions = [
+    ['sports', 'Sports & football'],
+    ['fps', 'FPS & tactical shooters'],
+    ['rpg', 'RPG & action RPG'],
+    ['battle-royale', 'Battle royale'],
+    ['racing', 'Racing'],
+    ['strategy', 'Strategy'],
+    ['fighting', 'Fighting'],
+    ['simulation', 'Simulation'],
+    ['adventure', 'Adventure'],
+    ['party', 'Casual & party'],
+  ];
+
+  const gradientAvatars = [
+    'gradient-violet',
+    'gradient-cyan',
+    'gradient-amber',
+    'gradient-emerald',
+    'gradient-pink',
+  ];
+
+  function clearPhotoPreview() {
+    if (state.previewUrl) {
+      URL.revokeObjectURL(state.previewUrl);
+      state.previewUrl = null;
+    }
+  }
+
+  function getInitial() {
+    return (
+      state.displayName.trim().charAt(0) ||
+      currentUser.username?.charAt(0) ||
+      '?'
+    ).toUpperCase();
+  }
+
+  function createAvatarPreview() {
+    const preview = document.createElement('div');
+    preview.className = 'onboarding-avatar-preview';
+
+    if (state.previewUrl) {
+      const image = document.createElement('img');
+      image.src = state.previewUrl;
+      image.alt = 'Selected profile picture preview';
+      preview.append(image);
+    } else if (
+      typeof state.avatar === 'string' &&
+      /^https:\/\//i.test(state.avatar)
+    ) {
+      const image = document.createElement('img');
+      image.src = state.avatar;
+      image.alt = 'Current profile picture';
+      preview.append(image);
+    } else {
+      const gradient = gradientAvatars.includes(state.avatar)
+        ? state.avatar
+        : 'gradient-violet';
+
+      preview.classList.add(gradient);
+      preview.textContent = getInitial();
+    }
+
+    return preview;
+  }
+
+  function cleanup() {
+    clearPhotoPreview();
+  }
+
   const render = () => {
     dialogNode.replaceChildren();
-    const close = document.createElement('button'); close.className = 'dialog-close'; close.type = 'button'; close.textContent = '×'; close.setAttribute('aria-label','Close onboarding'); close.addEventListener('click',()=>dialogNode.close());
-    const eyebrow = document.createElement('p'); eyebrow.className='eyebrow'; eyebrow.textContent=`PLAYER SETUP · STEP ${state.step - 1} OF 4`;
-    const title = document.createElement('h2'); title.id='onboarding-title';
-    const content=document.createElement('div'); content.className='onboarding-content';
-    const next=document.createElement('button'); next.className='button button--primary button--wide';next.type='button';next.textContent=state.step===5?'Enter your feed':'Continue';
-    const error=document.createElement('p');error.className='auth-error';error.setAttribute('role','status');
-    dialogNode.append(close,eyebrow,title,content,error,next);
-    if(state.step===2){
-      title.textContent='What do you play?';const copy=document.createElement('p');copy.className='dialog-copy';copy.textContent='Pick a few genres to tune your corner of Arcadia.';content.append(copy);
-      for(const [value,label] of genreOptions){const button=document.createElement('button');button.type='button';button.className=`interest-chip${state.genres.includes(value)?' is-selected':''}`;button.textContent=label;button.setAttribute('aria-pressed',String(state.genres.includes(value)));button.addEventListener('click',()=>{state.genres=state.genres.includes(value)?state.genres.filter((item)=>item!==value):[...state.genres,value];render();});content.append(button);}
-    } else if(state.step===3){
-      title.textContent='Choose your games';const search=document.createElement('input');search.type='search';search.placeholder='Search the catalog';search.setAttribute('aria-label','Search favorite games');content.append(search);const results=document.createElement('div');results.className='onboarding-games';content.append(results);
-      const searchGames=async(term='')=>{results.textContent='Loading games…';try{const data=await api(`/games?limit=30${term?`&q=${encodeURIComponent(term)}`:''}`);results.replaceChildren();for(const game of data.items){const button=document.createElement('button');button.type='button';button.className=`interest-chip${state.games.includes(game.slug)?' is-selected':''}`;button.textContent=`${state.games.includes(game.slug)?'✓ ':''}${game.name}`;button.setAttribute('aria-pressed',String(state.games.includes(game.slug)));button.addEventListener('click',()=>{state.games=state.games.includes(game.slug)?state.games.filter((slug)=>slug!==game.slug):[...state.games,game.slug].slice(0,20);render();});results.append(button);}if(!data.items.length)results.textContent='No games found.';}catch(e){results.textContent=e.message;}};
-      search.addEventListener('input',()=>{clearTimeout(searchGames.timer);searchGames.timer=setTimeout(()=>searchGames(search.value.trim()),250);});void searchGames();
-    } else if(state.step===4){
-      title.textContent='Your player card';const name=document.createElement('input');name.maxLength=40;name.placeholder='Display name';name.value=state.displayName;name.setAttribute('aria-label','Display name');name.addEventListener('input',()=>state.displayName=name.value);const bio=document.createElement('textarea');bio.maxLength=280;bio.placeholder='A short bio (optional)';bio.value=state.bio;bio.setAttribute('aria-label','Bio');bio.addEventListener('input',()=>state.bio=bio.value);content.append(name,bio);const label=document.createElement('p');label.className='dialog-copy';label.textContent='Choose a generated avatar color';content.append(label);for(const avatar of ['gradient-violet','gradient-cyan','gradient-amber','gradient-emerald','gradient-pink']){const button=document.createElement('button');button.className=`interest-chip ${avatar}${state.avatar===avatar?' is-selected':''}`;button.type='button';button.textContent=avatar.replace('gradient-','');button.setAttribute('aria-pressed',String(state.avatar===avatar));button.addEventListener('click',()=>{state.avatar=avatar;render();});content.append(button);}
-    } else { title.textContent='Welcome to your circle';const copy=document.createElement('p');copy.className='dialog-copy';copy.textContent='Your profile is ready. Find your games, share a highlight, and meet the players who make every match better.';content.append(copy); }
-    next.addEventListener('click',async()=>{next.disabled=true;error.textContent='';try{if(state.step===2){const data=await api('/auth/profile',{method:'PATCH',body:JSON.stringify({genres:state.genres})});currentUser=data.user;state.step=3;render();}else if(state.step===3){const data=await api('/auth/profile',{method:'PATCH',body:JSON.stringify({favoriteGames:state.games})});currentUser=data.user;state.step=4;render();}else if(state.step===4){const data=await api('/auth/profile',{method:'PATCH',body:JSON.stringify({displayName:state.displayName,bio:state.bio,avatar:state.avatar,onboardingComplete:true})});currentUser=data.user;state.step=5;render();}else{dialogNode.close();updateSignedInUI();selectView('feed');toast('You’re all set.');}}catch(e){error.textContent=e.message;next.disabled=false;}});
+
+    const close = document.createElement('button');
+    close.className = 'dialog-close';
+    close.type = 'button';
+    close.textContent = '×';
+    close.setAttribute('aria-label', 'Close onboarding');
+    close.addEventListener('click', () => dialogNode.close());
+
+    const eyebrow = document.createElement('p');
+    eyebrow.className = 'eyebrow';
+    eyebrow.textContent = `PLAYER SETUP · STEP ${state.step - 1} OF 4`;
+
+    const title = document.createElement('h2');
+    title.id = 'onboarding-title';
+
+    const content = document.createElement('div');
+    content.className = 'onboarding-content';
+
+    const next = document.createElement('button');
+    next.className = 'button button--primary button--wide';
+    next.type = 'button';
+    next.textContent =
+      state.step === 5 ? 'Enter your feed' : 'Continue';
+
+    const error = document.createElement('p');
+    error.className = 'auth-error';
+    error.setAttribute('role', 'status');
+    error.setAttribute('aria-live', 'polite');
+
+    dialogNode.append(close, eyebrow, title, content, error, next);
+
+    // STEP 2: Choose genres.
+    if (state.step === 2) {
+      title.textContent = 'What do you play?';
+
+      const copy = document.createElement('p');
+      copy.className = 'dialog-copy';
+      copy.textContent =
+        'Pick a few genres to tune your corner of Arcadia.';
+
+      content.append(copy);
+
+      for (const [value, label] of genreOptions) {
+        const button = document.createElement('button');
+
+        button.type = 'button';
+        button.className =
+          `interest-chip${state.genres.includes(value) ? ' is-selected' : ''}`;
+        button.textContent = label;
+        button.setAttribute(
+          'aria-pressed',
+          String(state.genres.includes(value))
+        );
+
+        button.addEventListener('click', () => {
+          state.genres = state.genres.includes(value)
+            ? state.genres.filter((item) => item !== value)
+            : [...state.genres, value];
+
+          render();
+        });
+
+        content.append(button);
+      }
+    }
+
+    // STEP 3: Choose favorite games.
+    else if (state.step === 3) {
+      title.textContent = 'Choose your games';
+
+      const search = document.createElement('input');
+      search.type = 'search';
+      search.placeholder = 'Search the catalog';
+      search.setAttribute('aria-label', 'Search favorite games');
+
+      content.append(search);
+
+      const results = document.createElement('div');
+      results.className = 'onboarding-games';
+      content.append(results);
+
+      const searchGames = async (term = '') => {
+        results.textContent = 'Loading games…';
+
+        try {
+          const data = await api(
+            `/games?limit=30${term ? `&q=${encodeURIComponent(term)}` : ''}`
+          );
+
+          results.replaceChildren();
+
+          for (const game of data.items) {
+            const button = document.createElement('button');
+
+            button.type = 'button';
+            button.className =
+              `interest-chip${state.games.includes(game.slug) ? ' is-selected' : ''}`;
+
+            button.textContent =
+              `${state.games.includes(game.slug) ? '✓ ' : ''}${game.name}`;
+
+            button.setAttribute(
+              'aria-pressed',
+              String(state.games.includes(game.slug))
+            );
+
+            button.addEventListener('click', () => {
+              state.games = state.games.includes(game.slug)
+                ? state.games.filter((slug) => slug !== game.slug)
+                : [...state.games, game.slug].slice(0, 20);
+
+              render();
+            });
+
+            results.append(button);
+          }
+
+          if (!data.items.length) {
+            results.textContent = 'No games found.';
+          }
+        } catch (e) {
+          results.textContent = e.message;
+        }
+      };
+
+      search.addEventListener('input', () => {
+        clearTimeout(searchGames.timer);
+
+        searchGames.timer = setTimeout(() => {
+          searchGames(search.value.trim());
+        }, 250);
+      });
+
+      void searchGames();
+    }
+
+    // STEP 4: Configure the player card and profile picture.
+    else if (state.step === 4) {
+      title.textContent = 'Your player card';
+
+      const name = document.createElement('input');
+      name.type = 'text';
+      name.maxLength = 40;
+      name.placeholder = 'Display name';
+      name.value = state.displayName;
+      name.setAttribute('aria-label', 'Display name');
+
+      name.addEventListener('input', () => {
+        state.displayName = name.value;
+
+        const preview = content.querySelector('.onboarding-avatar-preview');
+
+        if (
+          preview &&
+          !state.previewUrl &&
+          !(
+            typeof state.avatar === 'string' &&
+            /^https:\/\//i.test(state.avatar)
+          )
+        ) {
+          preview.textContent = getInitial();
+        }
+      });
+
+      const bio = document.createElement('textarea');
+      bio.maxLength = 280;
+      bio.placeholder = 'A short bio (optional)';
+      bio.value = state.bio;
+      bio.setAttribute('aria-label', 'Bio');
+
+      bio.addEventListener('input', () => {
+        state.bio = bio.value;
+      });
+
+      content.append(name, bio);
+
+      const photoHeading = document.createElement('p');
+      photoHeading.className = 'dialog-copy';
+      photoHeading.textContent = 'Make it yours';
+
+      const photoDescription = document.createElement('p');
+      photoDescription.className = 'dialog-copy';
+      photoDescription.textContent =
+        'Choose a profile photo or keep your favorite gradient.';
+
+      const avatarSection = document.createElement('div');
+      avatarSection.className = 'onboarding-avatar-section';
+
+      const preview = createAvatarPreview();
+
+      const photoInput = document.createElement('input');
+      photoInput.type = 'file';
+      photoInput.accept = 'image/jpeg,image/png,image/webp,image/gif';
+      photoInput.hidden = true;
+      photoInput.setAttribute('aria-label', 'Choose profile picture');
+
+      const photoButton = document.createElement('button');
+      photoButton.type = 'button';
+      photoButton.className = 'button button--secondary';
+      photoButton.textContent = state.photo
+        ? 'Change photo'
+        : 'Choose photo';
+
+      const photoHint = document.createElement('p');
+      photoHint.className = 'dialog-copy';
+      photoHint.textContent = 'JPEG, PNG, WebP or GIF · Maximum 5 MB';
+
+      photoButton.addEventListener('click', () => {
+        photoInput.click();
+      });
+
+      photoInput.addEventListener('change', () => {
+        const file = photoInput.files?.[0];
+
+        if (!file) return;
+
+        const allowedTypes = [
+          'image/jpeg',
+          'image/png',
+          'image/webp',
+          'image/gif',
+        ];
+
+        if (!allowedTypes.includes(file.type)) {
+          error.textContent =
+            'Choose a JPEG, PNG, WebP or GIF image.';
+          photoInput.value = '';
+          return;
+        }
+
+        if (file.size > 5 * 1024 * 1024) {
+          error.textContent =
+            'Your profile picture must be 5 MB or smaller.';
+          photoInput.value = '';
+          return;
+        }
+
+        clearPhotoPreview();
+
+        state.photo = file;
+        state.previewUrl = URL.createObjectURL(file);
+
+        // Remove the selected gradient when a photo is chosen.
+        state.avatar = null;
+
+        const image = document.createElement('img');
+        image.src = state.previewUrl;
+        image.alt = 'Selected profile picture preview';
+
+        preview.replaceChildren(image);
+        preview.className = 'onboarding-avatar-preview';
+
+        photoButton.textContent = 'Change photo';
+        error.textContent = '';
+      });
+
+      avatarSection.append(
+        preview,
+        photoButton,
+        photoInput,
+        photoHint
+      );
+
+      content.append(photoHeading, photoDescription, avatarSection);
+
+      const gradientHeading = document.createElement('p');
+      gradientHeading.className = 'dialog-copy';
+      gradientHeading.textContent = 'Or choose a generated avatar';
+
+      content.append(gradientHeading);
+
+      for (const avatar of gradientAvatars) {
+        const button = document.createElement('button');
+
+        button.type = 'button';
+        button.className =
+          `interest-chip ${avatar}${
+            !state.photo && state.avatar === avatar ? ' is-selected' : ''
+          }`;
+
+        button.textContent = avatar.replace('gradient-', '');
+
+        button.setAttribute(
+          'aria-pressed',
+          String(!state.photo && state.avatar === avatar)
+        );
+
+        button.addEventListener('click', () => {
+          state.photo = null;
+          clearPhotoPreview();
+          state.avatar = avatar;
+          render();
+        });
+
+        content.append(button);
+      }
+    }
+
+    // STEP 5: Welcome.
+    else {
+      title.textContent = 'Welcome to your circle';
+
+      const copy = document.createElement('p');
+      copy.className = 'dialog-copy';
+      copy.textContent =
+        'Your profile is ready. Find your games, share a highlight, and meet the players who make every match better.';
+
+      content.append(copy);
+    }
+
+    next.addEventListener('click', async () => {
+      next.disabled = true;
+      error.textContent = '';
+
+      try {
+        if (state.step === 2) {
+          const data = await api('/auth/profile', {
+            method: 'PATCH',
+            body: JSON.stringify({
+              genres: state.genres,
+            }),
+          });
+
+          currentUser = data.user;
+          state.step = 3;
+          render();
+        } else if (state.step === 3) {
+          const data = await api('/auth/profile', {
+            method: 'PATCH',
+            body: JSON.stringify({
+              favoriteGames: state.games,
+            }),
+          });
+
+          currentUser = data.user;
+          state.step = 4;
+          render();
+        } else if (state.step === 4) {
+          // Upload the selected photo first, if there is one.
+          if (state.photo) {
+            const formData = new FormData();
+            formData.append('photo', state.photo);
+
+            const uploadData = await api('/auth/avatar', {
+              method: 'POST',
+              body: formData,
+            });
+
+            currentUser = uploadData.user;
+            state.avatar = currentUser.avatar;
+            state.photo = null;
+            clearPhotoPreview();
+          }
+
+          // Save the rest of the player card.
+          const profileUpdate = {
+            displayName: state.displayName,
+            bio: state.bio,
+            onboardingComplete: true,
+          };
+
+          // Only send a generated avatar choice here.
+          // Uploaded photo URLs are saved by the avatar endpoint.
+          if (
+            !state.avatar ||
+            !/^https:\/\//i.test(state.avatar)
+          ) {
+            profileUpdate.avatar = gradientAvatars.includes(state.avatar)
+              ? state.avatar
+              : 'gradient-violet';
+          }
+
+          const data = await api('/auth/profile', {
+            method: 'PATCH',
+            body: JSON.stringify(profileUpdate),
+          });
+
+          currentUser = data.user;
+          state.step = 5;
+          render();
+        } else {
+          dialogNode.close();
+          cleanup();
+          updateSignedInUI();
+          selectView('feed');
+          toast('You’re all set.');
+        }
+      } catch (e) {
+        error.textContent = e.message || 'Something went wrong. Please try again.';
+        next.disabled = false;
+      }
+    });
   };
-  render(); if(!dialogNode.open)dialogNode.showModal();
+
+  dialogNode.addEventListener('close', cleanup, { once: true });
+
+  render();
+
+  if (!dialogNode.open) {
+    dialogNode.showModal();
+  }
+}
+
+/* Arcadia profile, edit-profile sheet and settings.
+   PASTE THIS OVER the old renderProfile, loadProfilePosts, editProfile and renderSettings
+   in js/main.js (everything from "async function renderProfile" up to, but not including,
+   "function composePost"). */
+
+function uiEl(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+const PF_COVERS = ['nebula', 'sunset', 'ocean', 'pitch', 'dusk'];
+function pfHash(value) { let total = 0; for (const ch of String(value)) total = (total * 31 + ch.charCodeAt(0)) >>> 0; return total; }
+function pfCover(seed) { return `/assets/arcadia/covers/cover-${PF_COVERS[pfHash(seed) % PF_COVERS.length]}.svg`; }
+function pfGameName(game) { return typeof game === 'string' ? game : (game?.name || game?.title || game?.slug || String(game)); }
+function pfTile(name) {
+  const initials = String(name).split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join('').toUpperCase() || '?';
+  const tile = uiEl('span', 'pf-tile', initials);
+  tile.style.backgroundImage = `url(/assets/arcadia/game-tiles/tile-${(pfHash(name) % 6) + 1}.svg)`;
+  tile.setAttribute('aria-hidden', 'true');
+  return tile;
+}
+function pfDaysText(createdAt) {
+  const days = Math.floor((Date.now() - new Date(createdAt).getTime()) / 86400000);
+  if (!Number.isFinite(days)) return '';
+  const safe = Math.max(0, days);
+  return safe < 30 ? `${safe} days` : safe < 365 ? `${Math.floor(safe / 30)} months` : `${(safe / 365).toFixed(1)} years`;
+}
+function pfEmpty(art, title, copy, actionLabel, action) {
+  const box = uiEl('div', 'pf-empty');
+  const img = document.createElement('img'); img.src = `/assets/arcadia/empty-states/${art}.svg`; img.alt = ''; img.width = 160; img.height = 120;
+  box.append(img, uiEl('h3', 'pf-empty-title', title), uiEl('p', 'pf-empty-copy', copy));
+  if (actionLabel) { const button = uiEl('button', 'button button--primary', actionLabel); button.type = 'button'; button.addEventListener('click', action); box.append(button); }
+  return box;
+}
+
+/* Friend buttons for other people's profiles.
+   PASTE THIS right above "async function renderProfile" in js/main.js. */
+
+function pfConfirm(title, message, confirmLabel) {
+  return new Promise((resolve) => {
+    const dialog = document.createElement('dialog'); dialog.className = 'sheet'; dialog.setAttribute('aria-labelledby', 'pf-confirm-title');
+    const form = document.createElement('form'); form.method = 'dialog';
+    const head = uiEl('div', 'sheet-head'); const heading = uiEl('h2', '', title); heading.id = 'pf-confirm-title'; head.append(heading);
+    const body = uiEl('div', 'sheet-body'); body.append(uiEl('p', '', message));
+    const foot = uiEl('div', 'sheet-foot');
+    const cancel = uiEl('button', 'button', 'Cancel'); cancel.type = 'button';
+    const confirm = uiEl('button', 'button button--danger', confirmLabel); confirm.type = 'submit'; foot.append(cancel, confirm);
+    form.append(head, body, foot); dialog.append(form);
+    let answer = false;
+    cancel.addEventListener('click', () => dialog.close());
+    form.addEventListener('submit', () => { answer = true; });
+    dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
+    dialog.addEventListener('close', () => { dialog.remove(); resolve(answer); });
+    document.body.append(dialog); dialog.showModal(); cancel.focus();
+  });
+}
+
+async function pfFriendActions(actions, user) {
+  const make = (label, className, handler) => {
+    const button = uiEl('button', className, label); button.type = 'button';
+    button.addEventListener('click', () => handler(button)); return button;
+  };
+  const render = async () => {
+    actions.replaceChildren();
+    if (!currentUser) { actions.append(make('Add friend', 'button button--primary', () => openAuth())); return; }
+    let info;
+    try { info = await api(`/friends/status/${encodeURIComponent(user.username)}`); } catch { return; }
+    if (info.status === 'self') return;
+    const run = async (button, work, message) => {
+      button.disabled = true;
+      try { await work(); if (message) toast(message); await render(); }
+      catch (e) { toast(e.message); button.disabled = false; }
+    };
+    const name = encodeURIComponent(user.username);
+    if (info.status === 'none') {
+      actions.append(make('Add friend', 'button button--primary', (b) => run(b, () => api(`/friends/${name}`, { method: 'POST' }), 'Friend request sent.')));
+    } else if (info.status === 'sent') {
+      actions.append(uiEl('span', 'pf-chip', 'Request sent'),
+        make('Cancel request', 'button', (b) => run(b, () => api(`/friends/${info.requestId}`, { method: 'DELETE' }), 'Request cancelled.')));
+    } else if (info.status === 'received') {
+      actions.append(
+        make('Accept', 'button button--primary', (b) => run(b, () => api(`/friends/${info.requestId}`, { method: 'PATCH', body: JSON.stringify({ action: 'accept' }) }), `You and ${user.displayName || user.username} are now friends.`)),
+        make('Decline', 'button', (b) => run(b, () => api(`/friends/${info.requestId}`, { method: 'PATCH', body: JSON.stringify({ action: 'reject' }) }), 'Request declined.')));
+    } 
+else if (info.status === 'friends') {
+  actions.append(make('Message', 'button button--primary', () => {
+    selectView('inbox');
+    messaging?.openChat(user);
+  }));
+
+  actions.append(make('Friends', 'button', async (b) => {
+    const ok = await pfConfirm(
+      'Remove friend?',
+      `${user.displayName || user.username} will be removed from your friends. You can send a new request later.`,
+      'Remove'
+    );
+
+    if (ok) {
+      await run(
+        b,
+        () => api(`/friends/remove/${name}`, { method: 'DELETE' }),
+        'Friend removed.'
+      );
+    }
+  }));
+}
+
+  };
+  await render();
+}
+
+/* Friends page: Friends list, Requests and Find players.
+   PASTE this right above "async function renderProfile" in js/main.js.
+   It uses helpers you already have: uiEl, pfEmpty, pfConfirm, api, toast, currentUser, openAuth, selectView, renderProfile. */
+
+function fdAvatar(person) {
+  const name = person.displayName || person.username;
+  const node = uiEl('span', `fd-avatar ${person.avatar || ''}`.trim(), name[0].toUpperCase());
+  node.setAttribute('aria-hidden', 'true');
+  return node;
+}
+
+function fdRow(person, fill) {
+  const row = uiEl('div', 'fd-item');
+  const main = uiEl('button', 'fd-main'); main.type = 'button';
+  main.setAttribute('aria-label', `Open ${person.displayName || person.username}'s profile`);
+  main.append(uiEl('span', 'fd-name', person.displayName || person.username), uiEl('span', 'fd-handle', `@${person.username}`));
+  if (person.bio) main.append(uiEl('span', 'fd-bio', person.bio));
+  main.addEventListener('click', () => { selectView('profile'); void renderProfile(person.username); });
+  const actions = uiEl('div', 'fd-actions');
+  row.append(fdAvatar(person), main, actions);
+  fill?.(actions);
+  return row;
+}
+
+async function renderFriends() {
+  const host = $('#view-friends'); if (!host) return;
+  host.replaceChildren(); host.append(uiEl('h1', 'sr-only', 'Friends'));
+  const page = uiEl('div', 'pf-page'); host.append(page);
+  const card = uiEl('section', 'pf-card'); page.append(card);
+  if (!currentUser) {
+    card.append(pfEmpty('empty-friends', 'Your squad is waiting', 'Sign in to add friends, share game nights and keep the conversation going.', 'Sign in', () => openAuth()));
+    return;
+  }
+  card.append(uiEl('h2', 'fd-title', 'Friends'), uiEl('p', 'fd-sub', 'Find players, answer requests and keep your squad close.'));
+  const tabsBar = uiEl('div', 'pf-tabs'); tabsBar.setAttribute('role', 'tablist'); tabsBar.setAttribute('aria-label', 'Friends sections');
+  const body = uiEl('div', 'fd-body'); card.append(tabsBar, body);
+  const state = { tab: 'friends', friends: [], incoming: [], outgoing: [] };
+  let searchToken = 0; let resultsBox = null; let searchInput = null;
+
+  const load = async () => {
+    const [friends, incoming, outgoing] = await Promise.all([api('/friends/list'), api('/friends/incoming'), api('/friends/outgoing')]);
+    state.friends = friends.items || []; state.incoming = incoming.items || []; state.outgoing = outgoing.items || [];
+  };
+  const act = (label, className, work, message) => {
+    const button = uiEl('button', className, label); button.type = 'button';
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      try { await work(); if (message) toast(message); await refresh(); } catch (e) { toast(e.message); button.disabled = false; }
+    });
+    return button;
+  };
+  const drawTabs = () => {
+    tabsBar.replaceChildren();
+    for (const [key, label] of [['friends', 'Friends'], ['requests', 'Requests'], ['find', 'Find players']]) {
+      const tab = uiEl('button', 'pf-tab', label); tab.type = 'button'; tab.setAttribute('role', 'tab'); tab.setAttribute('aria-selected', String(state.tab === key));
+      if (key === 'requests' && state.incoming.length) tab.append(uiEl('span', 'fd-badge', String(state.incoming.length)));
+      tab.addEventListener('click', () => { state.tab = key; draw(); });
+      tabsBar.append(tab);
+    }
+  };
+  const resultActions = (item) => (actions) => {
+    const name = encodeURIComponent(item.username);
+    if (item.status === 'none') {
+      if (item.canRequest) actions.append(act('Add friend', 'button button--primary', () => api(`/friends/${name}`, { method: 'POST' }), 'Friend request sent.'));
+      else actions.append(uiEl('span', 'pf-chip', 'Not accepting requests'));
+    } else if (item.status === 'sent') {
+      actions.append(uiEl('span', 'pf-chip', 'Request sent'), act('Cancel', 'button', () => api(`/friends/${item.requestId}`, { method: 'DELETE' }), 'Request cancelled.'));
+    } else if (item.status === 'received') {
+      actions.append(
+        act('Accept', 'button button--primary', () => api(`/friends/${item.requestId}`, { method: 'PATCH', body: JSON.stringify({ action: 'accept' }) }), 'Friend added.'),
+        act('Decline', 'button', () => api(`/friends/${item.requestId}`, { method: 'PATCH', body: JSON.stringify({ action: 'reject' }) }), 'Request declined.'));
+    } else if (item.status === 'friends') actions.append(uiEl('span', 'pf-chip', 'Friends'));
+  };
+  const runSearch = async () => {
+    if (!resultsBox) return;
+    const q = searchInput.value.trim(); const token = ++searchToken;
+    if (q.length < 2) { resultsBox.replaceChildren(uiEl('p', 'fd-hint', 'Type at least 2 characters of a username.')); return; }
+    try {
+      const data = await api(`/friends/search?q=${encodeURIComponent(q)}`);
+      if (token !== searchToken) return;
+      resultsBox.replaceChildren();
+      if (!data.items.length) { resultsBox.append(pfEmpty('empty-friends', 'No players found', `Nobody matches "${q}". Check the spelling of the username.`)); return; }
+      const list = uiEl('div', 'fd-list'); for (const item of data.items) list.append(fdRow(item, resultActions(item))); resultsBox.append(list);
+    } catch (e) { if (token === searchToken) resultsBox.replaceChildren(uiEl('p', 'fd-hint', e.message)); }
+  };
+  const draw = () => {
+    drawTabs(); body.replaceChildren(); resultsBox = null; searchInput = null;
+    if (state.tab === 'friends') {
+      if (!state.friends.length) { body.append(pfEmpty('empty-friends', 'No friends yet', 'Search for a username to send your first request.', 'Find players', () => { state.tab = 'find'; draw(); })); return; }
+      const list = uiEl('div', 'fd-list');
+      for (const friend of state.friends) list.append(fdRow(friend, (actions) => {
+        
+
+if (messaging) {
+  const message = uiEl('button', 'button button--primary', 'Message');
+  message.type = 'button';
+  message.addEventListener('click', () => {
+    selectView('inbox');
+    messaging?.openChat(friend);
+  });
+  actions.append(message);
+}
+
+        actions.append(act('Remove', 'button', async () => {
+          if (!(await pfConfirm('Remove friend?', `${friend.displayName} will be removed from your friends. You can send a new request later.`, 'Remove'))) throw new Error('Cancelled.');
+          await api(`/friends/remove/${encodeURIComponent(friend.username)}`, { method: 'DELETE' });
+        }, 'Friend removed.'));
+      }));
+      body.append(list);
+    } else if (state.tab === 'requests') {
+      if (!state.incoming.length && !state.outgoing.length) { body.append(pfEmpty('empty-notifications', 'No pending requests', 'New friend requests will show up here.')); return; }
+      if (state.incoming.length) {
+        body.append(uiEl('h3', 'fd-subhead', `Received (${state.incoming.length})`));
+        const list = uiEl('div', 'fd-list');
+        for (const item of state.incoming) list.append(fdRow(item.user, (actions) => actions.append(
+          act('Accept', 'button button--primary', () => api(`/friends/${item.id}`, { method: 'PATCH', body: JSON.stringify({ action: 'accept' }) }), 'Friend added.'),
+          act('Decline', 'button', () => api(`/friends/${item.id}`, { method: 'PATCH', body: JSON.stringify({ action: 'reject' }) }), 'Request declined.'))));
+        body.append(list);
+      }
+      if (state.outgoing.length) {
+        body.append(uiEl('h3', 'fd-subhead', `Sent (${state.outgoing.length})`));
+        const list = uiEl('div', 'fd-list');
+        for (const item of state.outgoing) list.append(fdRow(item.user, (actions) => actions.append(act('Cancel', 'button', () => api(`/friends/${item.id}`, { method: 'DELETE' }), 'Request cancelled.'))));
+        body.append(list);
+      }
+    } else {
+      const form = uiEl('div', 'fd-search'); searchInput = document.createElement('input');
+      searchInput.type = 'search'; searchInput.placeholder = 'Search by username'; searchInput.autocomplete = 'off'; searchInput.maxLength = 24; searchInput.setAttribute('aria-label', 'Search players by username');
+      let timer; searchInput.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(runSearch, 300); });
+      form.append(searchInput); resultsBox = uiEl('div', 'fd-results'); body.append(form, resultsBox); void runSearch(); searchInput.focus();
+    }
+  };
+  async function refresh() { await load(); if (state.tab === 'find') { drawTabs(); await runSearch(); } else draw(); }
+
+  body.append(uiEl('p', 'pf-loading', 'Loading…'));
+  try {
+    await load();
+    if (!state.friends.length) state.tab = state.incoming.length ? 'requests' : 'find';
+    draw();
+  } catch (e) { body.replaceChildren(pfEmpty('empty-posts', 'Friends unavailable', e.message || 'Could not load your friends.')); }
 }
 
 async function renderProfile(username = currentUser?.username) {
-  const host=$('#view-profile');if(!host)return;
-  host.replaceChildren();const heading=document.createElement('div');heading.className='page-heading';const title=document.createElement('h1');title.textContent=username?'Player profile.':'Profile.';heading.append(title);host.append(heading);
-  if(!username){const button=document.createElement('button');button.className='button button--primary';button.textContent='Sign in';button.addEventListener('click',()=>openAuth());host.append(button);return;}
-  const card=document.createElement('section');card.className='profile-card glass-panel';card.textContent='Loading profile…';host.append(card);
-  try{const data=await api(`/auth/profiles/${encodeURIComponent(username)}`);const user=data.user;card.replaceChildren();const avatar=document.createElement('div');avatar.className=`profile-avatar ${user.avatar||'gradient-violet'}`;avatar.textContent=(user.displayName||user.username)[0].toUpperCase();const name=document.createElement('h2');name.textContent=user.displayName||user.username;const handle=document.createElement('p');handle.textContent=`@${user.username}`;const bio=document.createElement('p');bio.textContent=user.bio||'No bio yet.';const age=document.createElement('p');const days=Math.max(0,Math.floor((Date.now()-new Date(user.createdAt).getTime())/86400000));age.textContent=`Playing here for ${days<30?`${days} days`:days<365?`${Math.floor(days/30)} months`:`${(days/365).toFixed(1)} years`}`;const games=document.createElement('p');games.textContent=`Favorite games: ${(user.favoriteGames||[]).join(', ')||'Not picked yet'}`;card.append(avatar,name,handle,bio,age,games);
-    const recent=document.createElement('section');recent.className='profile-posts';const recentTitle=document.createElement('h3');recentTitle.textContent='Recent public posts';const recentList=document.createElement('div');recentList.className='post-list';recent.append(recentTitle,recentList);card.append(recent);loadProfilePosts(user.username,recentList);
-    if(currentUser?.username===user.username){const edit=document.createElement('button');edit.className='button';edit.textContent='Edit profile';edit.addEventListener('click',()=>editProfile(card,user));const settings=document.createElement('button');settings.className='button button--primary';settings.textContent='Settings';settings.addEventListener('click',()=>renderSettings(host));card.append(edit,settings);}
-  }catch(e){card.textContent=e.message;}
+  const host = $('#view-profile'); if (!host) return;
+  host.replaceChildren();
+  host.append(uiEl('h1', 'sr-only', username ? 'Player profile' : 'Profile'));
+  const page = uiEl('div', 'pf-page'); host.append(page);
+  const card = uiEl('section', 'pf-card'); page.append(card);
+  if (!username) {
+    card.append(pfEmpty('empty-friends', 'Make it yours', 'Sign in to set up your profile, pick your games and join the circle.', 'Sign in', () => openAuth()));
+    return;
+  }
+  card.append(uiEl('p', 'pf-loading', 'Loading profile…'));
+  try {
+    const data = await api(`/auth/profiles/${encodeURIComponent(username)}`);
+    const user = data.user;
+    card.replaceChildren();
+    const display = user.displayName || user.username;
+    const isSelf = currentUser?.username === user.username;
+    const games = (user.favoriteGames || []).map(pfGameName);
+
+    const cover = uiEl('div', 'pf-cover'); cover.style.backgroundImage = `url(${pfCover(user.username)})`; cover.setAttribute('aria-hidden', 'true');
+    const head = uiEl('div', 'pf-head');
+    const avatar = uiEl('div', `pf-avatar ${user.avatar || 'gradient-violet'}`, display[0].toUpperCase()); avatar.setAttribute('aria-hidden', 'true');
+    const ident = uiEl('div', 'pf-id'); ident.append(uiEl('h2', 'pf-name', display), uiEl('p', 'pf-handle', `@${user.username}`));
+    const actions = uiEl('div', 'pf-actions');
+    if (isSelf) {
+      const edit = uiEl('button', 'button button--primary', 'Edit profile'); edit.type = 'button'; edit.addEventListener('click', () => openEditProfile(user));
+      const settings = uiEl('button', 'button', 'Settings'); settings.type = 'button'; settings.addEventListener('click', () => renderSettings(host));
+      actions.append(edit, settings);
+      const chat = uiEl('button', 'button', 'Chat');
+      chat.type = 'button';
+      chat.addEventListener('click', () => selectView('inbox'));
+      actions.append(chat);
+    } else {
+         void pfFriendActions(actions, user);
+    }
+    head.append(avatar, ident, actions);
+
+    const bio = uiEl('p', 'pf-bio', user.bio || (isSelf ? 'Add a short bio so people know who you are.' : 'No bio yet.'));
+    if (!user.bio) bio.classList.add('is-empty');
+    const chips = uiEl('div', 'pf-chips');
+    const joined = new Date(user.createdAt);
+    if (!Number.isNaN(joined.getTime())) chips.append(uiEl('span', 'pf-chip', `Joined ${joined.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}`));
+    if (games.length) chips.append(uiEl('span', 'pf-chip', `${games.length} favorite ${games.length === 1 ? 'game' : 'games'}`));
+
+    const tabs = uiEl('div', 'pf-tabs'); tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Profile sections');
+    const panels = uiEl('div', 'pf-panels');
+    const defs = [['posts', 'Posts'], ['games', 'Games'], ['about', 'About']];
+    const tabButtons = []; const panelNodes = {};
+    const select = (key) => {
+      for (const button of tabButtons) { const on = button.dataset.key === key; button.setAttribute('aria-selected', String(on)); button.tabIndex = on ? 0 : -1; }
+      for (const [name, panel] of Object.entries(panelNodes)) panel.hidden = name !== key;
+    };
+    defs.forEach(([key, label]) => {
+      const tab = uiEl('button', 'pf-tab', label); tab.type = 'button'; tab.id = `pf-tab-${key}`; tab.dataset.key = key;
+      tab.setAttribute('role', 'tab'); tab.setAttribute('aria-controls', `pf-panel-${key}`);
+      tab.addEventListener('click', () => select(key));
+      tab.addEventListener('keydown', (event) => {
+        if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+        const next = tabButtons[(tabButtons.indexOf(tab) + (event.key === 'ArrowRight' ? 1 : tabButtons.length - 1)) % tabButtons.length];
+        select(next.dataset.key); next.focus();
+      });
+      tabButtons.push(tab); tabs.append(tab);
+      const panel = uiEl('div', 'pf-panel'); panel.id = `pf-panel-${key}`; panel.setAttribute('role', 'tabpanel'); panel.setAttribute('aria-labelledby', tab.id);
+      panelNodes[key] = panel; panels.append(panel);
+    });
+
+    const list = uiEl('div', 'post-list pf-posts'); panelNodes.posts.append(list);
+    if (games.length) {
+      const grid = uiEl('div', 'pf-games');
+      for (const name of games) { const item = uiEl('div', 'pf-game'); item.append(pfTile(name), uiEl('span', '', name)); grid.append(item); }
+      panelNodes.games.append(grid);
+    } else {
+      panelNodes.games.append(isSelf
+        ? pfEmpty('empty-games', 'No games picked yet', 'Choose the games you play and Arcadia will tune your feed to them.', 'Choose games', (event) => startOnboarding(event))
+        : pfEmpty('empty-games', 'No games yet', `${display} hasn't picked favorite games yet.`));
+    }
+    const about = uiEl('dl', 'pf-about');
+    const addRow = (label, value) => { if (!value) return; const row = document.createElement('div'); row.append(uiEl('dt', '', label), uiEl('dd', '', value)); about.append(row); };
+    addRow('Display name', display); addRow('Username', `@${user.username}`); addRow('Bio', user.bio);
+    addRow('Member for', pfDaysText(user.createdAt)); addRow('Favorite games', games.join(', '));
+    panelNodes.about.append(about);
+
+    card.append(cover, head, bio, chips, tabs, panels);
+    select('posts');
+    void loadProfilePosts(user.username, list);
+  } catch (e) {
+    card.replaceChildren(pfEmpty('empty-posts', 'Profile unavailable', e.message || 'Could not load this profile.'));
+  }
 }
 
 async function loadProfilePosts(username,host,cursor=null){try{const data=await api(`/auth/profiles/${encodeURIComponent(username)}/posts?limit=10${cursor?`&cursor=${encodeURIComponent(cursor)}`:''}`);host.append(...data.items.map(renderPost));if(!data.items.length&&!cursor){const note=document.createElement('p');note.className='catalog-message';note.textContent='No public posts yet.';host.append(note);}if(data.nextCursor){let more=$('.profile-load-more',host);if(!more){more=document.createElement('button');more.className='button profile-load-more';more.type='button';more.textContent='Load more posts';host.append(more);}more.onclick=()=>{more.disabled=true;more.remove();void loadProfilePosts(username,host,data.nextCursor);};}}catch(error){const note=document.createElement('p');note.textContent=error.message;host.append(note);}}
 
-function editProfile(card,user){
-  const form=document.createElement('form');form.className='profile-edit';const name=document.createElement('input');name.maxLength=40;name.value=user.displayName||'';name.placeholder='Display name';const bio=document.createElement('textarea');bio.maxLength=280;bio.value=user.bio||'';bio.placeholder='Bio';const save=document.createElement('button');save.className='button button--primary';save.textContent='Save profile';form.append(name,bio,save);form.addEventListener('submit',async(event)=>{event.preventDefault();save.disabled=true;try{await api('/auth/profile',{method:'PATCH',body:JSON.stringify({displayName:name.value,bio:bio.value})});await renderProfile();toast('Profile saved.');}catch(e){toast(e.message);save.disabled=false;}});card.append(form);
+function openEditProfile(user) {
+  const dialog = document.createElement('dialog'); dialog.className = 'sheet'; dialog.setAttribute('aria-labelledby', 'edit-profile-title');
+  const form = document.createElement('form'); form.noValidate = false;
+  const head = uiEl('div', 'sheet-head'); head.append(uiEl('h2', '', 'Edit profile')); head.firstChild.id = 'edit-profile-title';
+  const close = uiEl('button', 'icon-button', '×'); close.type = 'button'; close.setAttribute('aria-label', 'Close'); close.addEventListener('click', () => dialog.close()); head.append(close);
+
+  const body = uiEl('div', 'sheet-body');
+  const nameField = uiEl('div', 'field'); const nameLabel = uiEl('label', '', 'Display name'); nameLabel.htmlFor = 'edit-display-name';
+  const name = document.createElement('input'); name.id = 'edit-display-name'; name.maxLength = 40; name.value = user.displayName || ''; name.placeholder = user.username; name.autocomplete = 'nickname';
+  const nameCount = uiEl('div', 'field-count'); nameField.append(nameLabel, name, nameCount);
+  const bioField = uiEl('div', 'field'); const bioLabel = uiEl('label', '', 'Bio'); bioLabel.htmlFor = 'edit-bio';
+  const bio = document.createElement('textarea'); bio.id = 'edit-bio'; bio.maxLength = 280; bio.value = user.bio || ''; bio.placeholder = 'What do you play, and who do you play with?';
+  const bioCount = uiEl('div', 'field-count'); bioField.append(bioLabel, bio, bioCount);
+  const count = () => { nameCount.textContent = `${name.value.length} / 40`; bioCount.textContent = `${bio.value.length} / 280`; };
+  name.addEventListener('input', count); bio.addEventListener('input', count); count();
+
+  const gamesRow = uiEl('div', 'st-row'); gamesRow.style.borderTop = '0'; gamesRow.style.padding = '0';
+  const gamesText = uiEl('div', 'st-text'); gamesText.append(uiEl('div', 'st-label', 'Favorite games'), uiEl('p', 'st-desc', (user.favoriteGames || []).map(pfGameName).join(', ') || 'Not picked yet'));
+  const change = uiEl('button', 'button', 'Change'); change.type = 'button'; change.addEventListener('click', (event) => { dialog.close(); startOnboarding(event); });
+  gamesRow.append(gamesText, change);
+  body.append(nameField, bioField, gamesRow);
+
+  const foot = uiEl('div', 'sheet-foot');
+  const cancel = uiEl('button', 'button', 'Cancel'); cancel.type = 'button'; cancel.addEventListener('click', () => dialog.close());
+  const save = uiEl('button', 'button button--primary', 'Save profile'); save.type = 'submit'; foot.append(cancel, save);
+  form.append(head, body, foot); dialog.append(form);
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault(); save.disabled = true;
+    try {
+      await api('/auth/profile', { method: 'PATCH', body: JSON.stringify({ displayName: name.value.trim(), bio: bio.value.trim() }) });
+      dialog.close(); await renderProfile(); toast('Profile saved.');
+    } catch (e) { toast(e.message); save.disabled = false; }
+  });
+  dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
+  dialog.addEventListener('close', () => dialog.remove());
+  document.body.append(dialog); dialog.showModal(); name.focus();
 }
 
-async function renderSettings(host){
-  let panel=$('#settings-panel',host);if(!panel){panel=document.createElement('section');panel.id='settings-panel';panel.className='settings-panel glass-panel';host.append(panel);}panel.replaceChildren();const title=document.createElement('h2');title.textContent='Settings';panel.append(title);const account=document.createElement('p');account.textContent=`Account · @${currentUser.username}`;panel.append(account);
-  const appearance=document.createElement('section');appearance.className='settings-appearance';const appearanceTitle=document.createElement('h3');appearanceTitle.textContent='Appearance';const appearanceCopy=document.createElement('p');appearanceCopy.textContent='Choose the look that feels right on your screen.';const appearanceLabel=document.createElement('label');appearanceLabel.htmlFor='theme-preference';appearanceLabel.textContent='Theme';const themeSelect=document.createElement('select');themeSelect.id='theme-preference';themeSelect.setAttribute('aria-label','Color theme');for(const [value,label] of [['light','Light mode'],['dark','Dark mode']]){const option=document.createElement('option');option.value=value;option.textContent=label;themeSelect.append(option);}themeSelect.value=document.documentElement.dataset.theme||'light';themeSelect.addEventListener('change',()=>{applyTheme(themeSelect.value);toast(`${themeSelect.value==='dark'?'Dark':'Light'} mode enabled.`);});appearance.append(appearanceTitle,appearanceCopy,appearanceLabel,themeSelect);panel.append(appearance);
-  const interests=document.createElement('button');interests.className='button';interests.type='button';interests.textContent='Update gaming interests';interests.addEventListener('click',startOnboarding);panel.append(interests);
-  const password=document.createElement('form');password.innerHTML='<h3>Password</h3><input name="currentPassword" type="password" autocomplete="current-password" placeholder="Current password" required><input name="newPassword" type="password" autocomplete="new-password" placeholder="New password, at least 10 characters" minlength="10" maxlength="128" required><button class="button" type="submit">Change password</button>';password.addEventListener('submit',async(event)=>{event.preventDefault();const values=Object.fromEntries(new FormData(password));const button=$('button',password);button.disabled=true;try{await api('/auth/password',{method:'POST',body:JSON.stringify(values)});password.reset();toast('Password changed. Other sessions were signed out.');}catch(e){toast(e.message);}finally{button.disabled=false;}});panel.append(password);
-  const settings=await api('/auth/settings').catch(()=>({settings:{notificationPreferences:{},privacy:{}}}));const form=document.createElement('form');form.innerHTML='<h3>Notifications</h3><label><input type="checkbox" name="comments"> Comments & replies</label><label><input type="checkbox" name="reactions"> Reactions & reposts</label><label><input type="checkbox" name="communities"> Community activity</label><h3>Privacy</h3><label>Profile visibility <select name="profileVisibility"><option value="public">Public</option><option value="private">Private</option></select></label><label>Friend requests <select name="friendRequests"><option value="everyone">Everyone</option><option value="nobody">Nobody</option></select></label><button class="button button--primary" type="submit">Save preferences</button>';for(const key of ['comments','reactions','communities'])$(`[name="${key}"]`,form).checked=settings.settings.notificationPreferences?.[key]!==false;for(const key of ['profileVisibility','friendRequests'])$(`[name="${key}"]`,form).value=settings.settings.privacy?.[key]||'everyone';form.addEventListener('submit',async(event)=>{event.preventDefault();const values=new FormData(form);try{await api('/auth/settings',{method:'PATCH',body:JSON.stringify({notificationPreferences:{comments:values.has('comments'),reactions:values.has('reactions'),communities:values.has('communities')},privacy:{profileVisibility:values.get('profileVisibility'),friendRequests:values.get('friendRequests')}})});toast('Settings saved.');}catch(e){toast(e.message);}});panel.append(form);
-  const signout=document.createElement('button');signout.className='button';signout.type='button';signout.textContent='Sign out';signout.addEventListener('click',()=>$('#auth-open').click());panel.append(signout);
+function stCard(title) { const card = uiEl('section', 'st-card'); if (title) card.append(uiEl('h2', '', title)); return card; }
+function stRow(label, description, control) {
+  const row = uiEl('div', 'st-row'); const text = uiEl('div', 'st-text');
+  text.append(uiEl('div', 'st-label', label)); if (description) text.append(uiEl('p', 'st-desc', description));
+  row.append(text); if (control) row.append(control); return row;
+}
+function stSwitch(name, checked, label) {
+  const wrap = uiEl('label', 'switch'); const input = document.createElement('input');
+  input.type = 'checkbox'; input.name = name; input.checked = checked; input.setAttribute('role', 'switch'); input.setAttribute('aria-label', label);
+  wrap.append(input); return wrap;
+}
+function stSelect(name, options, value, label) {
+  const select = uiEl('select', 'st-select'); select.name = name; select.setAttribute('aria-label', label);
+  for (const [optionValue, optionLabel] of options) { const option = document.createElement('option'); option.value = optionValue; option.textContent = optionLabel; select.append(option); }
+  select.value = value; return select;
+}
+
+async function renderSettings(host) {
+  if (!currentUser) { void renderProfile(); return; }
+  host.replaceChildren();
+  const page = uiEl('div', 'pf-page st-page'); host.append(page);
+  const top = uiEl('div', 'st-top');
+  const back = uiEl('button', 'st-back'); back.type = 'button';
+  back.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>'; back.append('Profile');
+  back.addEventListener('click', () => renderProfile());
+  top.append(back, uiEl('h1', 'st-heading', 'Settings')); page.append(top);
+
+  const account = stCard('Account');
+  const signout = uiEl('button', 'button', 'Sign out'); signout.type = 'button'; signout.addEventListener('click', () => $('#auth-open').click());
+  account.append(stRow('Username', `@${currentUser.username}`), stRow('Display name', currentUser.displayName || 'Not set'), stRow('Session', 'Sign out of Arcadia on this device.', signout));
+  page.append(account);
+
+  const appearance = stCard('Appearance');
+  const seg = uiEl('div', 'st-seg'); seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'Color theme');
+  for (const [value, label] of [['light', 'Light'], ['dark', 'Dark']]) {
+    const button = uiEl('button', '', label); button.type = 'button'; button.dataset.mode = value;
+    button.setAttribute('aria-pressed', String((document.documentElement.dataset.theme || 'light') === value));
+    button.addEventListener('click', () => {
+      applyTheme(value);
+      for (const other of seg.children) other.setAttribute('aria-pressed', String(other.dataset.mode === value));
+      toast(`${value === 'dark' ? 'Dark' : 'Light'} mode enabled.`);
+    });
+    seg.append(button);
+  }
+  const interests = uiEl('button', 'button', 'Update'); interests.type = 'button'; interests.addEventListener('click', startOnboarding);
+  appearance.append(stRow('Theme', 'Choose the look that feels right on your screen.', seg), stRow('Gaming interests', 'Pick the games and genres that shape your feed.', interests));
+  page.append(appearance);
+
+  const loaded = await api('/auth/settings').catch(() => ({ settings: { notificationPreferences: {}, privacy: {} } }));
+  const prefs = loaded.settings?.notificationPreferences || {}; const privacy = loaded.settings?.privacy || {};
+  const form = document.createElement('form');
+  const notifications = stCard('Notifications');
+  notifications.append(
+    stRow('Comments and replies', 'When someone responds to your posts.', stSwitch('comments', prefs.comments !== false, 'Comments and replies')),
+    stRow('Reactions and reposts', 'When someone likes or reposts what you share.', stSwitch('reactions', prefs.reactions !== false, 'Reactions and reposts')),
+    stRow('Community activity', 'News from the groups you have joined.', stSwitch('communities', prefs.communities !== false, 'Community activity'))
+  );
+  const privacyCard = stCard('Privacy');
+  privacyCard.append(
+    stRow('Profile visibility', 'Who can see your profile and posts.', stSelect('profileVisibility', [['public', 'Public'], ['private', 'Private']], privacy.profileVisibility || 'public', 'Profile visibility')),
+    stRow('Friend requests', 'Who can send you friend requests.', stSelect('friendRequests', [['everyone', 'Everyone'], ['nobody', 'Nobody']], privacy.friendRequests || 'everyone', 'Friend requests'))
+  );
+  const saveBar = uiEl('div', 'st-save'); const savePrefs = uiEl('button', 'button button--primary', 'Save preferences'); savePrefs.type = 'submit'; saveBar.append(savePrefs);
+  form.append(notifications, privacyCard, saveBar);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault(); const values = new FormData(form); savePrefs.disabled = true;
+    try {
+      await api('/auth/settings', { method: 'PATCH', body: JSON.stringify({ notificationPreferences: { comments: values.has('comments'), reactions: values.has('reactions'), communities: values.has('communities') }, privacy: { profileVisibility: values.get('profileVisibility'), friendRequests: values.get('friendRequests') } }) });
+      toast('Settings saved.');
+    } catch (e) { toast(e.message); } finally { savePrefs.disabled = false; }
+  });
+  page.append(form);
+
+    const security = stCard('Password');
+
+  const passwordToggle = uiEl('button', 'button', 'Change Password');
+  passwordToggle.type = 'button';
+  passwordToggle.setAttribute('aria-expanded', 'false');
+
+  const passwordForm = document.createElement('form');
+  passwordForm.hidden = true;
+
+  const fields = uiEl('div', 'st-fields');
+
+  const makeField = (id, labelText, name, autocomplete, extra = {}) => {
+    const field = uiEl('div', 'field');
+    const label = uiEl('label', '', labelText);
+    label.htmlFor = id;
+
+    const input = document.createElement('input');
+    input.id = id;
+    input.name = name;
+    input.type = 'password';
+    input.autocomplete = autocomplete;
+    input.required = true;
+    Object.assign(input, extra);
+
+    field.append(label, input);
+    return field;
+  };
+
+  fields.append(
+    makeField('pw-current', 'Current password', 'currentPassword', 'current-password'),
+    makeField('pw-new', 'New password', 'newPassword', 'new-password', {
+      minLength: 10,
+      maxLength: 128,
+      placeholder: 'At least 10 characters'
+    })
+  );
+
+  const actions = uiEl('div', 'st-actions');
+
+  const change = uiEl('button', 'button button--primary', 'Update Password');
+  change.type = 'submit';
+
+  const cancel = uiEl('button', 'button', 'Cancel');
+  cancel.type = 'button';
+
+  actions.append(change, cancel);
+  fields.append(actions);
+  passwordForm.append(fields);
+
+  passwordToggle.addEventListener('click', () => {
+    passwordForm.hidden = false;
+    passwordToggle.hidden = true;
+    passwordToggle.setAttribute('aria-expanded', 'true');
+    passwordForm.querySelector('#pw-current').focus();
+  });
+
+  cancel.addEventListener('click', () => {
+    passwordForm.reset();
+    passwordForm.hidden = true;
+    passwordToggle.hidden = false;
+    passwordToggle.setAttribute('aria-expanded', 'false');
+    passwordToggle.focus();
+  });
+
+  passwordForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+
+    if (!passwordForm.reportValidity()) return;
+
+    const values = Object.fromEntries(new FormData(passwordForm));
+
+    if (values.currentPassword === values.newPassword) {
+      toast('Your new password must be different from your current password.');
+      return;
+    }
+
+    change.disabled = true;
+    cancel.disabled = true;
+
+    try {
+      await api('/auth/password', {
+        method: 'POST',
+        body: JSON.stringify(values)
+      });
+
+      passwordForm.reset();
+      passwordForm.hidden = true;
+      passwordToggle.hidden = false;
+      passwordToggle.setAttribute('aria-expanded', 'false');
+
+      toast('Password changed. Other sessions were signed out.');
+      passwordToggle.focus();
+    } catch (e) {
+      toast(e.message);
+    } finally {
+      change.disabled = false;
+      cancel.disabled = false;
+    }
+  });
+
+  security.append(passwordToggle, passwordForm);
+  page.append(security);
 }
 
 function composePost() {

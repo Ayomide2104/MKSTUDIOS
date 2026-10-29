@@ -5,7 +5,17 @@ const destinationSchema = new mongoose.Schema({
 }, { _id: false });
 const postSchema = new mongoose.Schema({
   author: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-  body: { type: String, required: true, trim: true, maxlength: 500 },
+  body: {
+  type: String,
+  trim: true,
+  maxlength: 500,
+  validate: {
+    validator(value) {
+      return Boolean(value) || (Array.isArray(this.media) && this.media.length > 0);
+    },
+    message: 'A post must contain text or an image.',
+  },
+},
   destinations: { type: [destinationSchema], required: true, validate: (list) => list.length > 0 },
   type: { type: String, enum: ['original', 'repost'], default: 'original' },
   repostOf: { type: mongoose.Schema.Types.ObjectId, ref: 'Post', default: null },
