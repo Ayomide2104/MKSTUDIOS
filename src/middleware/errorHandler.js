@@ -5,6 +5,9 @@ function errorHandler(err, req, res, next) {
   if (err.code === 11000) status = 409;
   if (process.env.NODE_ENV !== 'production') {
     console.error(`${req.method} ${req.path}: ${err.name || 'Error'} (HTTP ${status})`);
+  } else if (status >= 500) {
+    // In production, log server errors so they show up in Render's Logs tab.
+    console.error(`${req.method} ${req.path}: ${err.name || 'Error'}: ${err.message || 'no message'} (HTTP ${status})`);
   }
   const message = err.code === 11000 ? 'A record with that value already exists' :
     status === 400 && err.name === 'ValidationError' ? 'Request validation failed' :

@@ -249,9 +249,8 @@ router.post(
             transformation: [
               {
                 width: 512,
-                height: 512,
-                crop: 'fill',
-                gravity: 'auto',
+height: 512,
+crop: 'limit',
               },
             ],
           },
@@ -350,7 +349,7 @@ router.post(
             public_id: `user_${req.user._id}_${Date.now()}`,
             resource_type: 'image',
             allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
-            transformation: [{ width: 1600, height: 600, crop: 'fill', gravity: 'auto' }],
+            transformation: [{ width: 1600, height: 600, crop: 'limit' }],
           },
           (error, result) => (error ? reject(error) : resolve(result))
         );

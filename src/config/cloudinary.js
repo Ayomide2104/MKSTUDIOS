@@ -16,9 +16,9 @@ if (isConfigured) {
 
 function ensureCloudinaryConfigured() {
   if (!isConfigured) {
-    throw new Error(
-      'Image uploads are unavailable because Cloudinary is not configured.'
-    );
+    const error = new Error('Image uploads are unavailable because Cloudinary is not configured.');
+    error.status = 503;
+    throw error;
   }
 }
 
