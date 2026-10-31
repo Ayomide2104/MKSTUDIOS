@@ -10,6 +10,8 @@ const { normalizeUsername, validateRegistration, serializePublicUser } = require
 
 const uploadImage = require('../middleware/imageUpload');
 const cloudinary = require('../config/cloudinary');
+const { hasImageSignature, removeOwnedImage } = require('../services/media');
+const presence = require('../services/presence');
 
 const router = express.Router();
 const WINDOW = 15 * 60 * 1000;
@@ -92,6 +94,10 @@ router.patch('/profile', requireAuth, async (req, res, next) => {
       if (!['gradient-violet', 'gradient-cyan', 'gradient-amber', 'gradient-emerald', 'gradient-pink'].includes(body.avatar)) return res.status(400).json({ success: false, error: 'Choose a generated avatar style.' });
       update.avatar = body.avatar;
     }
+    if (Object.hasOwn(body, 'banner')) {
+      if (body.banner !== null) return res.status(400).json({ success: false, error: 'Upload a new banner or remove the current one.' });
+      update.banner = null;
+    }
     if (Object.hasOwn(body, 'genres')) {
       if (!Array.isArray(body.genres) || body.genres.length > GENRES.length || body.genres.some((item) => typeof item !== 'string' || !GENRES.includes(item))) return res.status(400).json({ success: false, error: 'Choose valid gaming interests.' });
       update.genres = [...new Set(body.genres)];
@@ -108,6 +114,8 @@ router.patch('/profile', requireAuth, async (req, res, next) => {
       update.onboardingComplete = true;
     }
     const user = await User.findByIdAndUpdate(req.user._id, { $set: update }, { new: true, runValidators: true }).lean();
+    if (Object.hasOwn(update, 'avatar') && req.user.avatar !== user.avatar) void removeOwnedImage(req.user.avatar, 'arcadia/avatars', req.user._id);
+    if (update.banner === null && req.user.banner) void removeOwnedImage(req.user.banner, 'arcadia/banners', req.user._id);
     res.json({ success: true, data: { user: serializePublicUser(user) } });
   } catch (error) { next(error); }
 });
@@ -130,10 +138,12 @@ router.patch('/settings', requireAuth, async (req, res, next) => {
     }
     if (Object.hasOwn(body, 'privacy')) {
       const value = body.privacy;
-      if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((key) => !['profileVisibility', 'friendRequests'].includes(key)) || !['public', 'private'].includes(value.profileVisibility) || !['everyone', 'nobody'].includes(value.friendRequests)) return res.status(400).json({ success: false, error: 'Invalid privacy settings.' });
+      if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((key) => !['profileVisibility', 'friendRequests', 'showOnlineStatus'].includes(key)) || !['public', 'private'].includes(value.profileVisibility) || !['everyone', 'nobody'].includes(value.friendRequests)) return res.status(400).json({ success: false, error: 'Invalid privacy settings.' });
+      if (Object.hasOwn(value, 'showOnlineStatus') && typeof value.showOnlineStatus !== 'boolean') return res.status(400).json({ success: false, error: 'Invalid privacy settings.' });
       update.privacy = value;
     }
     await User.updateOne({ _id: req.user._id }, { $set: update });
+    if (update.privacy) void presence.refreshVisibility(req.app.get('io'), req.user._id);
     res.json({ success: true, data: { saved: true } });
   } catch (error) { next(error); }
 });
@@ -277,6 +287,9 @@ router.post(
         });
       }
 
+      // The new photo is saved: remove the user's previous uploaded photo.
+      if (req.user.avatar && req.user.avatar !== user.avatar) void removeOwnedImage(req.user.avatar, 'arcadia/avatars', req.user._id);
+
       return res.json({
         success: true,
         data: {
@@ -286,6 +299,7 @@ router.post(
             displayName: user.displayName || '',
             bio: user.bio || '',
             avatar: user.avatar || null,
+            banner: user.banner || null,
             genres: user.genres || [],
             favoriteGames: user.favoriteGames || [],
             createdAt: user.createdAt,
@@ -306,6 +320,65 @@ router.post(
         }
       }
 
+      return next(error);
+    }
+  }
+);
+// POST /api/auth/banner
+router.post(
+  '/banner',
+  requireAuth,
+  uploadImage.single('photo'),
+  async (req, res, next) => {
+    let uploadedImage = null;
+
+    try {
+      if (!req.file) {
+        return res.status(400).json({ success: false, error: 'Choose a banner image to upload.' });
+      }
+
+      if (!hasImageSignature(req.file.buffer)) {
+        return res.status(400).json({ success: false, error: 'The uploaded file is not a supported image.' });
+      }
+
+      cloudinary.ensureCloudinaryConfigured();
+
+      uploadedImage = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          {
+            folder: 'arcadia/banners',
+            public_id: `user_${req.user._id}_${Date.now()}`,
+            resource_type: 'image',
+            allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
+            transformation: [{ width: 1600, height: 600, crop: 'fill', gravity: 'auto' }],
+          },
+          (error, result) => (error ? reject(error) : resolve(result))
+        );
+        stream.end(req.file.buffer);
+      });
+
+      const user = await User.findByIdAndUpdate(
+        req.user._id,
+        { $set: { banner: uploadedImage.secure_url } },
+        { new: true, runValidators: true }
+      ).lean();
+
+      if (!user) {
+        await cloudinary.uploader.destroy(uploadedImage.public_id);
+        uploadedImage = null;
+        return res.status(404).json({ success: false, error: 'Your account could not be found.' });
+      }
+
+      if (req.user.banner && req.user.banner !== user.banner) {
+        void removeOwnedImage(req.user.banner, 'arcadia/banners', req.user._id);
+      }
+
+      return res.json({ success: true, data: { user: serializePublicUser(user) } });
+    } catch (error) {
+      if (uploadedImage?.public_id) {
+        try { await cloudinary.uploader.destroy(uploadedImage.public_id); }
+        catch (cleanupError) { console.error('Could not clean up an unsuccessful banner upload.', cleanupError.message); }
+      }
       return next(error);
     }
   }

@@ -1,0 +1,387 @@
+/* ==========================================================
+   ARCADIA · FULL-PAGE SIGN IN / CREATE ACCOUNT
+   Replaces the old pop-up. Clean light surfaces, one accent.
+   Desktop: split screen. Mobile: full-screen single column.
+   ========================================================== */
+
+.auth-page {
+  --ap-accent: #5a3fd6;
+  --ap-accent-dark: #4a31b8;
+  --ap-ink: #161823;
+  --ap-muted: #667085;
+  --ap-line: #d9dce6;
+  --ap-soft: #f4f5fa;
+
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: #fff;
+  color: var(--ap-ink);
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.auth-page:not([open]) {
+  display: none;
+}
+
+.auth-page::backdrop {
+  background: #fff;
+}
+
+.auth-page[open] {
+  display: block;
+  animation: ap-in 0.22s ease-out;
+}
+
+@keyframes ap-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+.ap-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(420px, 1fr);
+  min-height: 100dvh;
+}
+
+/* ---------- Left: brand showcase ---------- */
+
+.ap-showcase {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 32px;
+  padding: 44px 56px;
+  overflow: hidden;
+  color: #fff;
+  background: linear-gradient(155deg, #4a31b8 0%, #5a3fd6 48%, #3b82c4 100%);
+}
+
+.ap-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  color: inherit;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+}
+
+.ap-brand img {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+}
+
+.ap-showcase__copy h2 {
+  max-width: 460px;
+  margin: 0 0 14px;
+  font-size: clamp(34px, 3.6vw, 48px);
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+}
+
+.ap-showcase__copy p {
+  max-width: 420px;
+  margin: 0;
+  color: rgb(255 255 255 / 82%);
+  font-size: 17px;
+  line-height: 1.55;
+}
+
+.ap-covers {
+  position: relative;
+  height: 300px;
+  margin-top: 8px;
+}
+
+.ap-cover {
+  position: absolute;
+  bottom: 0;
+  width: 190px;
+  aspect-ratio: 3 / 4;
+  border-radius: 18px;
+  background-color: rgb(255 255 255 / 14%);
+  background-position: center;
+  background-size: cover;
+  box-shadow: 0 18px 40px rgb(15 10 50 / 32%);
+}
+
+.ap-cover:nth-child(1) { left: 0; transform: rotate(-7deg); }
+.ap-cover:nth-child(2) { left: 120px; z-index: 2; transform: translateY(-14px); }
+.ap-cover:nth-child(3) { left: 240px; transform: rotate(7deg); }
+
+.ap-points {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-points li {
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 16%);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* ---------- Right: form ---------- */
+
+.ap-main {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 18px;
+  padding: 32px 40px;
+  background: #fff;
+}
+
+.ap-topline {
+  display: flex;
+  width: min(420px, 100%);
+  justify-content: flex-end;
+}
+
+.ap-close {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ap-muted);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ap-close:hover {
+  background: var(--ap-soft);
+  color: var(--ap-ink);
+}
+
+.ap-card {
+  width: min(420px, 100%);
+}
+
+.ap-card h2 {
+  margin: 0 0 6px;
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.ap-sub {
+  margin: 0 0 24px;
+  color: var(--ap-muted);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.ap-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-bottom: 22px;
+  padding: 4px;
+  border-radius: 14px;
+  background: var(--ap-soft);
+}
+
+.ap-tab {
+  min-height: 44px;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--ap-muted);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+.ap-tab:hover {
+  color: var(--ap-ink);
+}
+
+.ap-tab.is-current,
+.ap-tab[aria-selected="true"] {
+  background: #fff;
+  color: var(--ap-accent);
+  box-shadow: 0 1px 3px rgb(22 24 35 / 12%);
+}
+
+.ap-form {
+  display: grid;
+}
+
+.ap-form label {
+  margin: 14px 0 7px;
+  color: var(--ap-ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ap-form label:first-child {
+  margin-top: 0;
+}
+
+.ap-form input {
+  width: 100%;
+  height: 52px;
+  padding: 0 16px;
+  border: 1px solid var(--ap-line);
+  border-radius: 14px;
+  outline: 0;
+  background: #fff;
+  color: var(--ap-ink);
+  font: inherit;
+  font-size: 16px; /* 16px stops iOS zooming into the field */
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.ap-form input::placeholder {
+  color: #98a0b3;
+}
+
+.ap-form input:focus {
+  border-color: var(--ap-accent);
+  box-shadow: 0 0 0 3px rgb(90 63 214 / 16%);
+}
+
+.ap-form [hidden] {
+  display: none !important;
+}
+
+.ap-error {
+  min-height: 20px;
+  margin: 10px 0 0;
+  color: #c0362c;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.ap-submit {
+  width: 100%;
+  min-height: 52px;
+  margin-top: 8px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--ap-accent);
+  color: #fff;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.ap-submit:hover {
+  background: var(--ap-accent-dark);
+}
+
+.ap-submit:active {
+  transform: scale(0.99);
+}
+
+.ap-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ap-note {
+  margin: 0;
+  color: var(--ap-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.auth-page :is(button, input):focus-visible {
+  outline: 3px solid var(--ap-accent);
+  outline-offset: 2px;
+}
+
+/* ---------- Tablet / mobile: full-screen single column ---------- */
+
+@media (max-width: 900px) {
+  .ap-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+  }
+
+  .ap-showcase {
+    gap: 14px;
+    padding: calc(22px + env(safe-area-inset-top)) 24px 26px;
+    border-radius: 0 0 28px 28px;
+  }
+
+  .ap-covers,
+  .ap-points {
+    display: none;
+  }
+
+  .ap-showcase__copy h2 {
+    margin-bottom: 8px;
+    font-size: 28px;
+  }
+
+  .ap-showcase__copy p {
+    font-size: 15px;
+  }
+
+  .ap-main {
+    justify-content: flex-start;
+    gap: 14px;
+    padding: 22px 22px calc(28px + env(safe-area-inset-bottom));
+  }
+
+  .ap-topline {
+    order: 3;
+    justify-content: center;
+  }
+
+  .ap-note {
+    order: 2;
+  }
+
+  .ap-card {
+    order: 1;
+  }
+
+  .ap-card h2 {
+    font-size: 26px;
+  }
+}
+
+@media (max-width: 380px) {
+  .ap-showcase { padding-inline: 18px; }
+  .ap-main { padding-inline: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-page[open],
+  .ap-tab,
+  .ap-submit,
+  .ap-form input {
+    animation: none;
+    transition: none;
+  }
+}

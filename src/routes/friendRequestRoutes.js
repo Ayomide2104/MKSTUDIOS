@@ -5,6 +5,7 @@ const Friendship = require('../models/Friendship');
 const User = require('../models/User');
 const { requireAuth } = require('../middleware/auth');
 const rateLimit = require('../middleware/rateLimit');
+const { notify } = require('../services/notifications');
 
 const router = express.Router();
 
@@ -179,6 +180,13 @@ router.post('/:username', sendRequestLimit, async (req, res, next) => {
       request = request.toObject();
     }
 
+    await notify({
+      recipient: recipient._id,
+      actor: req.user._id,
+      type: 'friend_request',
+      key: `friend_request:${request._id}:${Date.now()}`
+    });
+
     res.status(201).json({
       success: true,
       data: {
@@ -316,6 +324,13 @@ router.patch('/:requestId', async (req, res, next) => {
         throw conflict;
       }
     }
+
+    await notify({
+      recipient: request.sender,
+      actor: req.user._id,
+      type: 'friend_accept',
+      key: `friend_accept:${request._id}`
+    });
 
     return res.json({
       success: true,

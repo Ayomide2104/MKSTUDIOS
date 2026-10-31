@@ -1,0 +1,90 @@
+/* ==========================================================
+   ARCADIA · PRESENCE (green dot, "Active now", Online now panel)
+   ========================================================== */
+
+.has-presence { position: relative; }
+
+.has-presence::after {
+  position: absolute;
+  right: 1%;
+  bottom: 1%;
+  box-sizing: border-box;
+  display: none;
+  width: 26%;
+  min-width: 10px;
+  max-width: 16px;
+  aspect-ratio: 1;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #31c458;
+  content: '';
+}
+
+.has-presence[data-online="true"]::after { display: block; }
+
+.is-active-now { color: #1f9d46 !important; font-weight: 600; }
+
+/* Online now panel */
+#online-panel .mini-panel__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pr-count { padding: 3px 9px; border-radius: 999px; background: #e7f8ec; color: #1f9d46; font-size: 12px; font-weight: 700; }
+
+.pr-body {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  padding: 10px;
+  border: 0;
+  border-radius: 16px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.pr-body:hover { background: rgb(90 63 214 / 7%); }
+.pr-body:focus-visible { outline: 3px solid #5a3fd6; outline-offset: 2px; }
+
+.pr-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.pr-person { display: block; }
+
+.pr-avatar {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #7c5cff, #2dd4bf);
+  color: #fff;
+  font-weight: 700;
+}
+
+.pr-more {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #eef0f7;
+  color: #667085;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pr-add {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 2px dashed #b9b0ee;
+  border-radius: 50%;
+  color: #5a3fd6;
+  font-size: 24px;
+  font-weight: 400;
+  line-height: 1;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.pr-body:hover .pr-add { border-color: #5a3fd6; background: #f3f0ff; }
+.pr-text { margin: 0; color: #667085; font-size: 14px; line-height: 1.45; }

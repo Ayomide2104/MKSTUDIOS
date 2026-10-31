@@ -1,0 +1,531 @@
+/* ==========================================================
+   ARCADIA · FULL-PAGE ONBOARDING
+   Clean light surfaces, one accent, card-deck hover.
+   ========================================================== */
+
+.ob-page {
+  --ob-accent: #5a3fd6;
+  --ob-accent-soft: #f3f0ff;
+  --ob-ink: #161823;
+  --ob-muted: #667085;
+  --ob-line: #e1e4ee;
+
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: #fafbff;
+  color: var(--ob-ink);
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.ob-page:not([open]) { display: none; }
+.ob-page::backdrop { background: #fafbff; }
+.ob-page[open] { display: block; animation: ob-in 0.22s ease-out; }
+@keyframes ob-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+.ob-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+/* ---------- Header + progress ---------- */
+
+.ob-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: calc(16px + env(safe-area-inset-top)) clamp(16px, 4vw, 48px) 16px;
+  border-bottom: 1px solid var(--ob-line);
+  background: #fff;
+}
+
+.ob-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.ob-brand img { width: 34px; height: 34px; border-radius: 10px; }
+
+.ob-progress {
+  display: flex;
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ob-progress__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ob-muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ob-progress__dot {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #e9ebf3;
+  font-size: 13px;
+}
+
+.ob-progress__item.is-current { color: var(--ob-ink); }
+.ob-progress__item.is-current .ob-progress__dot,
+.ob-progress__item.is-done .ob-progress__dot { background: var(--ob-accent); color: #fff; }
+
+/* ---------- Main ---------- */
+
+.ob-main {
+  flex: 1;
+  width: min(1120px, 100%);
+  margin: 0 auto;
+  padding: 36px clamp(16px, 4vw, 48px) 32px;
+}
+
+.ob-main h1 {
+  margin: 0 0 8px;
+  font-size: clamp(28px, 4vw, 40px);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+
+.ob-sub {
+  max-width: 560px;
+  margin: 0 0 28px;
+  color: var(--ob-muted);
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+/* ---------- Genre cards with card-deck hover ---------- */
+
+.ob-genres {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.ob-genre {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 14px 16px;
+  border: 1.5px solid var(--ob-line);
+  border-radius: 20px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.18s, box-shadow 0.18s, transform 0.18s, background 0.18s;
+}
+
+.ob-genre:hover,
+.ob-genre:focus-visible {
+  border-color: #c9c2f0;
+  box-shadow: 0 10px 28px rgb(60 40 160 / 12%);
+  transform: translateY(-3px);
+}
+
+.ob-genre.is-selected {
+  border-color: var(--ob-accent);
+  background: var(--ob-accent-soft);
+  box-shadow: 0 0 0 1px var(--ob-accent);
+}
+
+.ob-check {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--ob-accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 0.15s, transform 0.18s;
+}
+
+.is-selected > .ob-check { opacity: 1; transform: none; }
+
+.ob-deck {
+  position: relative;
+  height: 150px;
+  margin-bottom: 8px;
+}
+
+.ob-deck__card {
+  position: absolute;
+  bottom: 6px;
+  left: 50%;
+  width: 84px;
+  aspect-ratio: 3 / 4;
+  margin-left: -42px;
+  border-radius: 12px;
+  background: linear-gradient(160deg, #8d7bea, #5a3fd6);
+  object-fit: cover;
+  box-shadow: 0 6px 14px rgb(30 20 90 / 22%);
+  transform:
+    translateX(calc(var(--i) * 16px))
+    translateY(calc(-8px * (1 - var(--i) * var(--i))))
+    rotate(calc(var(--i) * 4deg));
+  transition: transform 0.38s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.ob-deck__card.is-missing { color: transparent; }
+
+.ob-genre:hover .ob-deck__card,
+.ob-genre:focus-visible .ob-deck__card,
+.ob-genre.is-selected .ob-deck__card {
+  transform:
+    translateX(calc(var(--i) * 54px))
+    translateY(calc(-16px * (1 - var(--i) * var(--i)) + var(--i) * var(--i) * 4px))
+    rotate(calc(var(--i) * 13deg))
+    scale(1.04);
+}
+
+.ob-genre__body h3 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.ob-genre__body p {
+  margin: 0;
+  min-height: 54px;
+  color: var(--ob-muted);
+  font-size: 13.5px;
+  line-height: 1.45;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.ob-genre:hover .ob-genre__body p,
+.ob-genre:focus-visible .ob-genre__body p,
+.ob-genre.is-selected .ob-genre__body p {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---------- Games step ---------- */
+
+.ob-search {
+  width: 100%;
+  max-width: 520px;
+  height: 52px;
+  margin-bottom: 28px;
+  padding: 0 18px;
+  border: 1px solid var(--ob-line);
+  border-radius: 14px;
+  outline: 0;
+  background: #fff;
+  color: var(--ob-ink);
+  font: inherit;
+  font-size: 16px;
+}
+
+.ob-search:focus {
+  border-color: var(--ob-accent);
+  box-shadow: 0 0 0 3px rgb(90 63 214 / 16%);
+}
+
+.ob-section { margin-bottom: 32px; }
+
+.ob-section h2 {
+  margin: 0 0 14px;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.ob-games {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 16px;
+}
+
+.ob-game {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 14px 16px;
+  border: 1.5px solid var(--ob-line);
+  border-radius: 20px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.18s, box-shadow 0.18s, transform 0.18s, background 0.18s;
+}
+
+.ob-game:hover,
+.ob-game:focus-visible {
+  border-color: #c9c2f0;
+  box-shadow: 0 10px 28px rgb(60 40 160 / 12%);
+  transform: translateY(-3px);
+}
+
+.ob-game.is-selected {
+  border-color: var(--ob-accent);
+  background: var(--ob-accent-soft);
+  box-shadow: 0 0 0 1px var(--ob-accent);
+}
+
+.ob-deck--game { height: 160px; }
+
+.ob-deck__card--main {
+  z-index: 3;
+  width: 104px;
+  margin-left: -52px;
+  box-shadow: 0 10px 22px rgb(30 20 90 / 30%);
+  transform: translateY(-4px);
+}
+
+.ob-deck__card--back {
+  z-index: 1;
+  width: 78px;
+  margin-left: -39px;
+  opacity: 0.92;
+  transform: translateX(calc(var(--i) * 24px)) translateY(-14px) rotate(calc(var(--i) * 6deg));
+}
+
+.ob-game:hover .ob-deck__card--main,
+.ob-game:focus-visible .ob-deck__card--main,
+.ob-game.is-selected .ob-deck__card--main { transform: translateY(-10px) scale(1.04); }
+
+.ob-game:hover .ob-deck__card--back,
+.ob-game:focus-visible .ob-deck__card--back,
+.ob-game.is-selected .ob-deck__card--back {
+  transform: translateX(calc(var(--i) * 62px)) translateY(-8px) rotate(calc(var(--i) * 13deg));
+}
+
+.ob-game__body h3 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.ob-game__body p {
+  margin: 0;
+  color: var(--ob-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.ob-empty { color: var(--ob-muted); font-size: 15px; }
+
+/* ---------- Player card preview (photo + banner) ---------- */
+
+.ob-card {
+  max-width: 560px;
+  margin-bottom: 20px;
+  overflow: hidden;
+  border: 1px solid var(--ob-line);
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgb(30 20 90 / 8%);
+}
+
+.ob-card__cover {
+  height: 150px;
+  background-color: #312e81;
+  background-position: center;
+  background-size: cover;
+}
+
+.ob-card__row {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  padding: 0 18px 16px;
+  margin-top: -44px;
+}
+
+.ob-card__avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 92px;
+  height: 92px;
+  overflow: hidden;
+  border: 4px solid #fff;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #7c5cff, #2dd4bf);
+  color: #fff;
+  font-size: 34px;
+  font-weight: 700;
+}
+
+.ob-card__id { min-width: 0; padding-bottom: 6px; }
+.ob-card__name { overflow: hidden; font-size: 20px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.ob-card__handle { color: var(--ob-muted); font-size: 14px; }
+
+.ob-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 18px 18px;
+}
+
+.ob-pill {
+  min-height: 42px;
+  padding: 0 16px;
+  border: 1px solid var(--ob-line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ob-ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.ob-pill:hover { border-color: var(--ob-accent); background: var(--ob-accent-soft); }
+.ob-pill:disabled { opacity: 0.55; cursor: progress; }
+.ob-card__status { min-height: 20px; margin: 0; padding: 0 18px 14px; color: var(--ob-muted); font-size: 13px; }
+.ob-card__status.is-error { color: #c0362c; }
+.ob-optional { max-width: 560px; margin: 0 0 18px; color: var(--ob-muted); font-size: 14px; }
+
+/* ---------- Profile step ---------- */
+
+.ob-form { display: grid; max-width: 560px; }
+.ob-form label { margin: 16px 0 7px; font-size: 14px; font-weight: 600; }
+.ob-form label:first-child { margin-top: 0; }
+
+.ob-form input,
+.ob-form textarea {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid var(--ob-line);
+  border-radius: 14px;
+  outline: 0;
+  background: #fff;
+  color: var(--ob-ink);
+  font: inherit;
+  font-size: 16px;
+  resize: vertical;
+}
+
+.ob-form input { height: 52px; padding-block: 0; }
+
+.ob-form input:focus,
+.ob-form textarea:focus {
+  border-color: var(--ob-accent);
+  box-shadow: 0 0 0 3px rgb(90 63 214 / 16%);
+}
+
+/* ---------- Sticky footer ---------- */
+
+.ob-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px clamp(16px, 4vw, 48px) calc(14px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--ob-line);
+  background: rgb(255 255 255 / 96%);
+}
+
+.ob-footer__left,
+.ob-footer__right { display: flex; align-items: center; gap: 10px; }
+.ob-count { color: var(--ob-muted); font-size: 14px; font-weight: 600; }
+.ob-note { flex: 1; margin: 0; color: #c0362c; font-size: 14px; text-align: center; }
+
+.ob-btn {
+  min-height: 48px;
+  padding: 0 22px;
+  border: 0;
+  border-radius: 14px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.ob-btn--primary { background: var(--ob-accent); color: #fff; }
+.ob-btn--primary:hover { background: #4a31b8; }
+.ob-btn--primary:disabled { opacity: 0.45; cursor: not-allowed; }
+.ob-btn--ghost { background: transparent; color: var(--ob-muted); }
+.ob-btn--ghost:hover { background: #eef0f7; color: var(--ob-ink); }
+
+.ob-page :is(button, input, textarea):focus-visible { outline: 3px solid var(--ob-accent); outline-offset: 2px; }
+
+/* ---------- Mobile ---------- */
+
+@media (max-width: 700px) {
+  .ob-card__cover { height: 120px; }
+  .ob-card__row { margin-top: -38px; }
+  .ob-card__avatar { width: 80px; height: 80px; font-size: 30px; }
+  .ob-progress__label { display: none; }
+  .ob-progress { gap: 8px; }
+  .ob-main { padding-top: 24px; }
+  .ob-genres { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .ob-genre { padding: 10px 10px 14px; border-radius: 18px; }
+  .ob-deck { height: 128px; }
+  .ob-deck__card { width: 68px; margin-left: -34px; }
+  .ob-genre:hover .ob-deck__card,
+  .ob-genre:focus-visible .ob-deck__card,
+  .ob-genre.is-selected .ob-deck__card {
+    transform:
+      translateX(calc(var(--i) * 40px))
+      translateY(calc(-14px * (1 - var(--i) * var(--i)) + var(--i) * var(--i) * 4px))
+      rotate(calc(var(--i) * 13deg))
+      scale(1.04);
+  }
+  .ob-genre__body h3 { font-size: 15px; }
+  .ob-genre__body p { min-height: 60px; font-size: 12.5px; }
+  .ob-games { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .ob-game { padding: 10px 10px 14px; border-radius: 18px; }
+  .ob-deck--game { height: 140px; }
+  .ob-deck__card--main { width: 88px; margin-left: -44px; }
+  .ob-deck__card--back { width: 66px; margin-left: -33px; }
+  .ob-game:hover .ob-deck__card--back,
+  .ob-game:focus-visible .ob-deck__card--back,
+  .ob-game.is-selected .ob-deck__card--back { transform: translateX(calc(var(--i) * 46px)) translateY(-8px) rotate(calc(var(--i) * 13deg)); }
+  .ob-game__body h3 { font-size: 14px; }
+  .ob-game__body p { font-size: 12px; }
+  .ob-note { display: none; }
+  .ob-btn { padding: 0 16px; }
+}
+
+/* Touch screens: show the writeup under every card so it is never hidden */
+@media (hover: none) {
+  .ob-genre__body p { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ob-page[open], .ob-genre, .ob-deck__card, .ob-genre__body p, .ob-game, .ob-check { animation: none; transition: none; }
+}

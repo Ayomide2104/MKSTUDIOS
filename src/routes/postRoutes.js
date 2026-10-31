@@ -13,6 +13,9 @@ const { publicFeedFilter } = require('../services/postVisibility');
 const rateLimit = require('../middleware/rateLimit');
 const { requireAuth, optionalAuth } = require('../middleware/auth');
 const User = require('../models/User');
+const SeenPost = require('../models/SeenPost');
+const { getFriendIds } = require('../services/friends');
+const { notify } = require('../services/notifications');
 
 const router = express.Router();
 
@@ -75,6 +78,41 @@ async function findVisiblePost(id, req) {
   return null;
 }
 
+// POST /api/posts/seen  { ids: [postId, ...] }
+const limitSeen = rateLimit({ name: 'post-seen', max: 60, windowMs: 15 * 60 * 1000 });
+
+router.post('/seen', requireAuth, limitSeen, async (req, res, next) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    const clean = [...new Set(ids.filter((id) => typeof id === 'string' && validId(id)))].slice(0, 50);
+
+    if (!clean.length) {
+      return res.json({ success: true, data: { recorded: 0 } });
+    }
+
+    // Only record posts that really exist.
+    const existing = await Post.find({ _id: { $in: clean }, removedAt: null }).distinct('_id');
+    const now = new Date();
+
+    if (existing.length) {
+      await SeenPost.bulkWrite(
+        existing.map((id) => ({
+          updateOne: {
+            filter: { user: req.user._id, post: id },
+            update: { $set: { seenAt: now }, $setOnInsert: { user: req.user._id, post: id } },
+            upsert: true,
+          },
+        })),
+        { ordered: false }
+      );
+    }
+
+    return res.json({ success: true, data: { recorded: existing.length } });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 // GET /api/posts
 router.get('/', optionalAuth, async (req, res, next) => {
   try {
@@ -119,15 +157,23 @@ router.get('/', optionalAuth, async (req, res, next) => {
       });
     }
 
+    // People the viewer is friends with: used by the Friends feed and as a ranking boost.
+    const friendIds = req.user ? await getFriendIds(req.user._id) : [];
+
     if (feed === 'friends') {
-      return res.json({
-        success: true,
-        data: {
-          items: [],
-          nextCursor: null,
-          unavailable: 'Friends feed will be available with friends.',
-        },
-      });
+      if (!req.user) {
+        return res.json({ success: true, data: { items: [], nextCursor: null, unavailable: 'signin' } });
+      }
+
+      if (!friendIds.length) {
+        return res.json({ success: true, data: { items: [], nextCursor: null, unavailable: 'no-friends' } });
+      }
+
+      query.author = { $in: friendIds };
+
+      if (!req.query.game) {
+        query.destinations = { $elemMatch: { type: { $in: ['general', 'game'] } } };
+      }
     }
 
     if (
@@ -177,6 +223,12 @@ router.get('/', optionalAuth, async (req, res, next) => {
       }
     }
 
+    // Posts seen before this moment are ranked lower. The time travels in the
+    // pagination cursor so a page you just viewed cannot reappear on the next page.
+    const seenBefore = new Date(
+      typeof paginationCursor?.t === 'number' ? paginationCursor.t : Date.now()
+    );
+
     const candidates = await Post.find(query)
       .sort({ _id: -1 })
       .limit(200)
@@ -203,7 +255,23 @@ router.get('/', optionalAuth, async (req, res, next) => {
       games.map((game) => [game.slug, game.genres || []])
     );
 
-    const now = Date.now();
+    const friendSet = new Set(friendIds.map(String));
+    let seenSet = new Set();
+
+    if (req.user && candidates.length) {
+      const seenRows = await SeenPost.find({
+        user: req.user._id,
+        post: { $in: candidates.map((post) => post._id) },
+        seenAt: { $lt: seenBefore },
+      })
+        .select('post')
+        .lean();
+
+      seenSet = new Set(seenRows.map((row) => String(row.post)));
+    }
+
+    // Use the first request's time for every page, so ranks cannot drift between pages.
+    const now = seenBefore.getTime();
 
     const ranked = candidates
       .map((post) => {
@@ -228,6 +296,10 @@ router.get('/', optionalAuth, async (req, res, next) => {
 
         const recency = 4 * Math.exp(-hours / 72);
 
+        // Friends' posts get a boost; posts already seen sink (but stay available).
+        const friendBoost = friendSet.has(String(post.author?._id)) ? 1.5 : 0;
+        const seenPenalty = seenSet.has(String(post._id)) ? 6 : 0;
+
         const interests =
           (gameMatch ? 3 : 0) +
           (genreMatch ? 1.5 : 0);
@@ -243,7 +315,7 @@ router.get('/', optionalAuth, async (req, res, next) => {
 
         return {
           ...post,
-          _rank: recency + interests + engagement,
+          _rank: recency + interests + engagement + friendBoost - seenPenalty,
         };
       })
       .sort(
@@ -301,6 +373,7 @@ router.get('/', optionalAuth, async (req, res, next) => {
             JSON.stringify({
               score: last._rank,
               id: String(last._id),
+              t: seenBefore.getTime(),
             })
           ).toString('base64url')
         : null;
@@ -656,6 +729,14 @@ router.post('/:id/like', requireAuth, async (req, res, next) => {
         { _id: post._id },
         { $inc: { likeCount: 1 } }
       );
+
+      await notify({
+        recipient: post.author,
+        actor: req.user._id,
+        type: 'like',
+        post: post._id,
+        key: `like:${post._id}:${req.user._id}`,
+      });
     }
 
     const liked = await Reaction.exists({
@@ -763,6 +844,14 @@ router.post('/:id/repost', requireAuth, async (req, res, next) => {
         { _id: post._id },
         { $inc: { repostCount: 1 } }
       );
+
+      await notify({
+        recipient: post.author,
+        actor: req.user._id,
+        type: 'repost',
+        post: post._id,
+        key: `repost:${post._id}:${req.user._id}`,
+      });
     }
 
     return res.json({
@@ -916,6 +1005,7 @@ router.post(
       }
 
       let parent = null;
+      let parentAuthor = null;
 
       if (req.body.parent != null) {
         if (!validId(req.body.parent)) {
@@ -930,7 +1020,7 @@ router.post(
           post: post._id,
           parent: null,
         })
-          .select('_id')
+          .select('_id author')
           .lean();
 
         if (!parentComment) {
@@ -942,6 +1032,7 @@ router.post(
         }
 
         parent = parentComment._id;
+        parentAuthor = parentComment.author;
       }
 
       const comment = await Comment.create({
@@ -955,6 +1046,28 @@ router.post(
         { _id: post._id },
         { $inc: { commentCount: 1 } }
       );
+
+      if (parentAuthor) {
+        await notify({
+          recipient: parentAuthor,
+          actor: req.user._id,
+          type: 'reply',
+          post: post._id,
+          comment: comment._id,
+          key: `reply:${comment._id}`,
+        });
+      }
+
+      if (!parentAuthor || String(parentAuthor) !== String(post.author)) {
+        await notify({
+          recipient: post.author,
+          actor: req.user._id,
+          type: 'comment',
+          post: post._id,
+          comment: comment._id,
+          key: `comment:${comment._id}`,
+        });
+      }
 
       await comment.populate('author', 'username displayName avatar');
 

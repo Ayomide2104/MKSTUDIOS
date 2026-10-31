@@ -1,0 +1,176 @@
+/* ==========================================================
+   ARCADIA · NOTIFICATIONS
+   Desktop: popover under the bell. Phone: full-screen sheet.
+   ========================================================== */
+
+.nt-bell { position: relative; overflow: visible !important; }
+
+.nt-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  display: grid;
+  place-items: center;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: #e5484d;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.nt-badge[hidden] { display: none; }
+
+.nt-panel {
+  position: fixed;
+  z-index: 1000;
+  top: 72px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  width: min(420px, calc(100vw - 24px));
+  max-height: min(640px, calc(100dvh - 96px));
+  overflow: hidden;
+  border: 1px solid #e1e4ee;
+  border-radius: 20px;
+  background: #fff;
+  color: #161823;
+  font-family: Inter, system-ui, sans-serif;
+  box-shadow: 0 24px 60px rgb(30 20 90 / 22%);
+  animation: nt-in 0.18s ease-out;
+}
+
+.nt-panel[hidden] { display: none; }
+@keyframes nt-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+
+.nt-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid #eef0f6;
+}
+
+.nt-head h2 { flex: 1; margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
+
+.nt-link {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #5a3fd6;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.nt-link:hover { background: #f3f0ff; }
+.nt-link[hidden] { display: none; }
+
+.nt-close {
+  display: none;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 50%;
+  background: #f1f2f8;
+  color: #161823;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.nt-list { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 6px; }
+
+.nt-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 12px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nt-item:hover { background: #f6f7fb; }
+.nt-item.is-unread { background: #f3f0ff; }
+.nt-item.is-unread:hover { background: #ece7ff; }
+
+.nt-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #7c5cff, #2dd4bf);
+  color: #fff;
+  font-weight: 700;
+}
+
+.nt-body { display: grid; flex: 1; gap: 3px; min-width: 0; }
+.nt-line { font-size: 14px; line-height: 1.4; }
+.nt-snippet { overflow: hidden; color: #667085; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.nt-meta { flex: none; padding-top: 2px; color: #98a0b3; font-size: 12px; font-weight: 600; }
+
+.nt-item.is-unread .nt-meta::after {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: #5a3fd6;
+  content: '';
+}
+
+.nt-empty { display: grid; gap: 6px; padding: 48px 24px; color: #667085; text-align: center; }
+.nt-empty strong { color: #161823; font-size: 16px; }
+.nt-empty p { margin: 0; font-size: 14px; line-height: 1.5; }
+
+.nt-more {
+  min-height: 48px;
+  border: 0;
+  border-top: 1px solid #eef0f6;
+  background: #fff;
+  color: #5a3fd6;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.nt-more[hidden] { display: none; }
+.nt-panel :is(button):focus-visible { outline: 3px solid #5a3fd6; outline-offset: 2px; }
+
+@media (max-width: 700px) {
+  .nt-panel {
+    inset: 0;
+    width: 100%;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    animation: none;
+  }
+
+  .nt-head { padding: calc(14px + env(safe-area-inset-top)) 16px 12px; }
+  .nt-close { display: block; }
+  .nt-list { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  .nt-item { padding: 14px 10px; }
+}
+
+html.nt-lock body { overflow: hidden; }
+@media (min-width: 701px) { html.nt-lock body { overflow: auto; } }
+@media (prefers-reduced-motion: reduce) { .nt-panel { animation: none; } }

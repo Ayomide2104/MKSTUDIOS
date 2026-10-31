@@ -1,0 +1,45 @@
+/* Uploaded profile photos inside any avatar circle */
+.has-photo {
+  padding: 0 !important;
+  background: #e6e8f0 !important;
+  color: transparent;
+}
+
+.avatar-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: inherit;
+}
+
+/* Edit profile: photo section */
+.avatar-edit {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.avatar-edit__preview {
+  width: 88px;
+  height: 88px;
+  flex: none;
+  border-width: 3px;
+  font-size: 32px;
+}
+
+.avatar-edit__text { display: grid; gap: 8px; min-width: 0; }
+.avatar-edit__buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.avatar-edit__status { margin: 0; min-height: 18px; font-size: 13px; color: var(--muted, #667085); }
+.avatar-edit__status.is-error { color: #c0362c; }
+
+/* Edit profile: banner section */
+.banner-edit { display: grid; gap: 10px; }
+.banner-edit__preview {
+  height: 110px;
+  border-radius: 16px;
+  background-color: #312e81;
+  background-position: center;
+  background-size: cover;
+}
+.banner-edit__row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

@@ -24,6 +24,7 @@ function serializePublicUser(user) {
     displayName: user.displayName || '',
     bio: user.bio || '',
     avatar: user.avatar || null,
+    banner: user.banner || null,
     genres: user.genres || [],
     favoriteGames: user.favoriteGames || [],
     createdAt: user.createdAt,

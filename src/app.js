@@ -85,6 +85,8 @@ app.use('/api/games', require('./routes/gameRoutes'));
 app.use('/api/communities', require('./routes/communityRoutes'));
 app.use('/api/friends', require('./routes/friendRequestRoutes'));
 app.use('/api/messages', require('./routes/messageRoutes'));
+app.use('/api/notifications', require('./routes/notificationRoutes'));
+app.use('/api/presence', require('./routes/presenceRoutes'));
 // Keep API misses on the JSON 404 path before static files are considered.
 app.use('/api', notFound);
 if (isDeployed) {

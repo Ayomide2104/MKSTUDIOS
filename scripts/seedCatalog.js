@@ -15,7 +15,9 @@ const games = [
   ['overwatch-2','Overwatch 2',['fps','action'],'#f6c273'],['rainbow-six-siege','Rainbow Six Siege',['fps','tactical-shooter'],'#84b6e9'],
   ['forza-horizon-5','Forza Horizon 5',['racing','simulation'],'#65d6c1'],['tekken-8','Tekken 8',['fighting','action'],'#f17f80'],
   ['the-sims-4','The Sims 4',['simulation','casual'],'#77d4a6'],['among-us','Among Us',['casual','party'],'#e989a6'],
-  ['stardew-valley','Stardew Valley',['simulation','adventure'],'#9fd276'],['dota-2','Dota 2',['strategy','rpg'],'#e37b73']
+  ['stardew-valley','Stardew Valley',['simulation','adventure'],'#9fd276'],['dota-2','Dota 2',['strategy','rpg'],'#e37b73'],
+  ['efootball','eFootball',['sports','football'],'#5fb4f0'],['free-fire','Free Fire',['battle-royale','shooter'],'#f2994a'],
+  ['call-of-duty-mobile','Call of Duty: Mobile',['fps','tactical-shooter'],'#d5a66b'],['asphalt-legends-unite','Asphalt Legends Unite',['racing','arcade'],'#ef6a6a']
 ].map(([slug,name,genres,accent]) => ({ slug,name,genres,accent,platforms:[],description:`Find players and conversations for ${name}.`,aliases:[],active:true }));
 const communities = [
   { slug:'fc-mobile',name:'FC Mobile',game:'fc-mobile',description:'Build your squad, trade tips, and talk football.',accent:'#53dcaa' },

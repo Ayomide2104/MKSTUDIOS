@@ -1,4 +1,11 @@
 import { createMessaging } from './messaging.js';
+import { setAvatar, isPhotoAvatar, prepareAvatarFile, prepareBannerFile, applyBanner } from './avatar.js';
+import { createNotifications } from './notifications.js';
+import { createSeenTracker } from './seen.js';
+import { presence } from './presence.js';
+
+const seenTracker = createSeenTracker({ api: (path, options) => api(path, options), isSignedIn: () => Boolean(currentUser) });
+import { createOnboarding } from './onboarding.js';
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const dialog = $('#auth-dialog');
@@ -6,6 +13,7 @@ const composerDialog = $('#composer-dialog');
 const authForm = $('#auth-form');
 let authMode = 'login';
 let currentUser = null;
+let notifications = null;
 let returnTo = null;
 let destinationChoicesLoaded = false;
 let csrfToken = null;
@@ -114,7 +122,6 @@ window.addEventListener('scroll', () => {
 
 $$('.feed-tab').forEach((tab, index) => {
   tab.addEventListener('click', () => {
-    if (tab.dataset.filter === 'friends') { toast('Friends feed will unlock with friend connections.'); return; }
     if (tab.dataset.filter === 'groups') { toast('Group posts are not available in the feed API yet.'); return; }
     $$('.feed-tab').forEach((item) => {
       const active = item === tab;
@@ -149,6 +156,7 @@ $('#auth-open').addEventListener('click', async () => {
 $$('[data-action="compose"]').forEach((button) => button.addEventListener('click', () => { if (!currentUser) return openAuth('compose'); composePost(); if (button.textContent.trim() === 'Photo') photoInput.click(); }));
 
 $('.dialog-close').addEventListener('click', () => dialog.close());
+$('#auth-close')?.addEventListener('click', () => dialog.close());
 dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
 $('.dialog-close', composerDialog).addEventListener('click', () => composerDialog.close());
 composerDialog.addEventListener('click', (event) => { if (event.target === composerDialog) composerDialog.close(); });
@@ -305,6 +313,30 @@ $$('[data-auth-mode]').forEach((button) =>
   )
 );
 
+function setAuthMode(mode) {
+  authMode = mode;
+  $$('[data-auth-mode]').forEach((button) => {
+    const active = button.dataset.authMode === mode;
+    button.classList.toggle('is-current', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  $('#auth-title').textContent = mode === 'login' ? 'Get in the game.' : 'Join your people.';
+  $('#auth-password').autocomplete = mode === 'login' ? 'current-password' : 'new-password';
+  $('#auth-password').placeholder = mode === 'login' ? 'Your password' : 'At least 10 characters';
+  let confirm = $('#auth-confirm');
+  if (mode === 'register' && !confirm) {
+    const label = document.createElement('label'); label.htmlFor = 'auth-confirm'; label.textContent = 'Confirm password';
+    confirm = document.createElement('input'); confirm.id = 'auth-confirm'; confirm.type = 'password'; confirm.autocomplete = 'new-password'; confirm.placeholder = 'Type it again'; confirm.required = true;
+    $('#auth-error').before(label, confirm);
+  }
+  if (confirm) {
+    confirm.previousElementSibling.hidden = mode !== 'register';
+    confirm.hidden = mode !== 'register';
+    confirm.required = mode === 'register';
+  }
+  $('#auth-error').textContent = '';
+}
+
 async function api(path, options = {}) {
   const method = (options.method || 'GET').toUpperCase();
 
@@ -399,10 +431,12 @@ authForm.addEventListener('submit', async (event) => {
 function updateSignedInUI() {
   $('#auth-open').setAttribute('aria-label', currentUser ? 'Sign out' : 'Sign in');
   $('#auth-open').title = currentUser ? 'Sign out' : 'Sign in';
-  $('#auth-avatar').textContent = currentUser?.displayName?.[0]?.toUpperCase() || currentUser?.username?.[0]?.toUpperCase() || '?';
+  setAvatar($('#auth-avatar'), currentUser?.avatar, currentUser?.displayName?.[0]?.toUpperCase() || currentUser?.username?.[0]?.toUpperCase() || '?');
   $('#auth-avatar').setAttribute('aria-label', currentUser ? `Signed in as ${currentUser.username}` : 'Sign in to your profile');
   if ($('#comments-form')) { $('#comments-form').hidden = !currentUser; $('#comments-signin').hidden = Boolean(currentUser); }
-  $('.avatar--composer').textContent = currentUser?.username?.[0]?.toUpperCase() || '?';
+  setAvatar($('.avatar--composer'), currentUser?.avatar, currentUser?.username?.[0]?.toUpperCase() || '?');
+  if (currentUser) notifications?.refresh(); else notifications?.reset();
+  presence.sync();
   $$('[data-action="signin"]').forEach((button) => {
     if (!button.dataset.originalLabel) button.dataset.originalLabel = button.textContent;
     if (currentUser) {
@@ -494,12 +528,26 @@ async function loadFeed(filter = activeFeed, cursor = null) {
 
     const items = result.items || [];
 
-    list.append(...items.map(renderPost));
+    list.append(...items.map((item) => { const node = renderPost(item); seenTracker.observe(node); return node; }));
 
     feedCursor = result.nextCursor || null;
 
-    if (!items.length && !cursor && result.unavailable) {
-      state.innerHTML = '<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-posts.svg" alt=""/><h2>Friends feed is coming later</h2><p>Friend connections are part of the next approved phase.</p>';
+    if (!items.length && !cursor && (result.unavailable || filter === 'friends')) {
+      const signedOut = result.unavailable === 'signin';
+      state.innerHTML = '<img class="feed-empty-art" src="/assets/arcadia/empty-states/empty-posts.svg" alt=""/>';
+      const heading = document.createElement('h2');
+      const note = document.createElement('p');
+      heading.textContent = signedOut ? 'Sign in to see your friends' : result.unavailable ? 'Your friends feed is waiting' : 'Your friends haven’t posted yet';
+      note.textContent = signedOut ? 'Posts from the people you add will show up here.' : result.unavailable ? 'Add friends and their posts will show up here.' : 'When they post, you’ll see it here first.';
+      state.append(heading, note);
+      if (signedOut || result.unavailable) {
+        const action = document.createElement('button');
+        action.className = 'button button--primary';
+        action.type = 'button';
+        action.textContent = signedOut ? 'Sign in' : 'Find friends';
+        action.addEventListener('click', () => (signedOut ? openAuth() : selectView('friends')));
+        state.append(action);
+      }
       return;
     }
 
@@ -616,9 +664,7 @@ function renderPost(post) {
     '?'
   )[0].toUpperCase();
 
-  if (post.author?.avatar) {
-    avatar.classList.add(post.author.avatar);
-  }
+  setAvatar(avatar, post.author?.avatar, avatar.textContent);
 
   const meta = document.createElement('div');
   meta.className = 'post-meta';
@@ -646,9 +692,36 @@ function renderPost(post) {
 
   const handle = document.createElement('span');
 
-  handle.textContent =
-    `@${post.author?.username || 'player'} · ` +
-    new Date(post.createdAt).toLocaleDateString();
+  
+const postDate = new Date(post.createdAt);
+const elapsedSeconds = Math.max(
+  0,
+  Math.floor((Date.now() - postDate.getTime()) / 1000)
+);
+
+let relativeTime;
+
+if (elapsedSeconds < 60) {
+  relativeTime = 'Just now';
+} else if (elapsedSeconds < 3600) {
+  relativeTime = `${Math.floor(elapsedSeconds / 60)}m`;
+} else if (elapsedSeconds < 86400) {
+  relativeTime = `${Math.floor(elapsedSeconds / 3600)}h`;
+} else if (elapsedSeconds < 604800) {
+  relativeTime = `${Math.floor(elapsedSeconds / 86400)}d`;
+} else if (elapsedSeconds < 2592000) {
+  relativeTime = `${Math.floor(elapsedSeconds / 604800)}w`;
+} else if (elapsedSeconds < 31536000) {
+  relativeTime = `${Math.floor(elapsedSeconds / 2592000)}mo`;
+} else {
+  relativeTime = `${Math.floor(elapsedSeconds / 31536000)}y`;
+}
+
+handle.textContent =
+  `@${post.author?.username || 'player'} · ${relativeTime}`;
+
+handle.title = postDate.toLocaleString();
+
 
   meta.append(name, handle);
   header.append(avatar, meta);
@@ -1035,7 +1108,7 @@ function renderPost(post) {
     article.append(mediaGallery);
   }
 
-  article.append(summary, actions);
+  article.append(actions);
 
   article._updateComments = updateComments;
 
@@ -1049,19 +1122,59 @@ let commentsHashPushed = false;
 let commentsLoadGeneration = 0;
 let commentsTouchStart = null;
 
+
 function commentTime(item) {
   const time = document.createElement('time');
-  const date = new Date(item.createdAt || item.updatedAt || Date.now());
-  time.dateTime = date.toISOString(); time.textContent = date.toLocaleDateString();
+  const date = new Date(
+    item.createdAt || item.updatedAt || Date.now()
+  );
+
+  time.dateTime = date.toISOString();
+
+  const updateRelativeTime = () => {
+    const seconds = Math.max(
+      0,
+      Math.floor((Date.now() - date.getTime()) / 1000)
+    );
+
+    let label;
+
+    if (seconds < 60) {
+      label = 'Just now';
+    } else if (seconds < 3600) {
+      label = `${Math.floor(seconds / 60)}m`;
+    } else if (seconds < 86400) {
+      label = `${Math.floor(seconds / 3600)}h`;
+    } else if (seconds < 604800) {
+      label = `${Math.floor(seconds / 86400)}d`;
+    } else if (seconds < 2592000) {
+      label = `${Math.floor(seconds / 604800)}w`;
+    } else if (seconds < 31536000) {
+      label = `${Math.floor(seconds / 2592000)}mo`;
+    } else {
+      label = `${Math.floor(seconds / 31536000)}y`;
+    }
+
+    time.textContent = label;
+    time.title = date.toLocaleString();
+    time.setAttribute(
+      'aria-label',
+      `Posted ${date.toLocaleString()}`
+    );
+  };
+
+  updateRelativeTime();
+
   return time;
 }
+
 
 function discussionComment(item, onReply) {
   const row = document.createElement('article'); row.className = 'discussion-comment'; row.dataset.commentId = String(item._id || '');
   if (item.parent) row.classList.add('is-reply');
   const avatar = document.createElement('span'); avatar.className = 'discussion-avatar';
   avatar.textContent = (item.author?.displayName || item.author?.username || '?')[0].toUpperCase();
-  if (item.author?.avatar) avatar.classList.add(item.author.avatar);
+  setAvatar(avatar, item.author?.avatar, avatar.textContent);
   const content = document.createElement('div'); content.className = 'discussion-main';
   const meta = document.createElement('div'); meta.className = 'discussion-meta';
   const author = document.createElement('strong'); author.textContent = item.author?.displayName || item.author?.username || 'Player';
@@ -1291,501 +1404,40 @@ async function loadUpdates() {
   } catch(error) { list.replaceChildren();const note=document.createElement('p');note.className='catalog-message';note.textContent=error.message;list.append(note); }
 }
 
+const onboarding = createOnboarding({
+  api,
+  getUser: () => currentUser,
+  setUser: (user) => { currentUser = user; },
+  onFinish: () => { updateSignedInUI(); selectView('feed'); toast('You’re all set.'); },
+});
+
 function startOnboarding() {
-  let dialogNode = $('#onboarding-dialog');
-
-  if (!dialogNode) {
-    dialogNode = document.createElement('dialog');
-    dialogNode.id = 'onboarding-dialog';
-    dialogNode.className = 'auth-dialog glass-panel';
-    dialogNode.setAttribute('aria-labelledby', 'onboarding-title');
-    document.body.append(dialogNode);
-  }
-
-  const state = {
-    step: 2,
-    genres: [...(currentUser.genres || [])],
-    games: [...(currentUser.favoriteGames || [])],
-    displayName: currentUser.displayName || '',
-    bio: currentUser.bio || '',
-    avatar: currentUser.avatar || 'gradient-violet',
-    photo: null,
-    previewUrl: null,
-  };
-
-  const genreOptions = [
-    ['sports', 'Sports & football'],
-    ['fps', 'FPS & tactical shooters'],
-    ['rpg', 'RPG & action RPG'],
-    ['battle-royale', 'Battle royale'],
-    ['racing', 'Racing'],
-    ['strategy', 'Strategy'],
-    ['fighting', 'Fighting'],
-    ['simulation', 'Simulation'],
-    ['adventure', 'Adventure'],
-    ['party', 'Casual & party'],
-  ];
-
-  const gradientAvatars = [
-    'gradient-violet',
-    'gradient-cyan',
-    'gradient-amber',
-    'gradient-emerald',
-    'gradient-pink',
-  ];
-
-  function clearPhotoPreview() {
-    if (state.previewUrl) {
-      URL.revokeObjectURL(state.previewUrl);
-      state.previewUrl = null;
-    }
-  }
-
-  function getInitial() {
-    return (
-      state.displayName.trim().charAt(0) ||
-      currentUser.username?.charAt(0) ||
-      '?'
-    ).toUpperCase();
-  }
-
-  function createAvatarPreview() {
-    const preview = document.createElement('div');
-    preview.className = 'onboarding-avatar-preview';
-
-    if (state.previewUrl) {
-      const image = document.createElement('img');
-      image.src = state.previewUrl;
-      image.alt = 'Selected profile picture preview';
-      preview.append(image);
-    } else if (
-      typeof state.avatar === 'string' &&
-      /^https:\/\//i.test(state.avatar)
-    ) {
-      const image = document.createElement('img');
-      image.src = state.avatar;
-      image.alt = 'Current profile picture';
-      preview.append(image);
-    } else {
-      const gradient = gradientAvatars.includes(state.avatar)
-        ? state.avatar
-        : 'gradient-violet';
-
-      preview.classList.add(gradient);
-      preview.textContent = getInitial();
-    }
-
-    return preview;
-  }
-
-  function cleanup() {
-    clearPhotoPreview();
-  }
-
-  const render = () => {
-    dialogNode.replaceChildren();
-
-    const close = document.createElement('button');
-    close.className = 'dialog-close';
-    close.type = 'button';
-    close.textContent = '×';
-    close.setAttribute('aria-label', 'Close onboarding');
-    close.addEventListener('click', () => dialogNode.close());
-
-    const eyebrow = document.createElement('p');
-    eyebrow.className = 'eyebrow';
-    eyebrow.textContent = `PLAYER SETUP · STEP ${state.step - 1} OF 4`;
-
-    const title = document.createElement('h2');
-    title.id = 'onboarding-title';
-
-    const content = document.createElement('div');
-    content.className = 'onboarding-content';
-
-    const next = document.createElement('button');
-    next.className = 'button button--primary button--wide';
-    next.type = 'button';
-    next.textContent =
-      state.step === 5 ? 'Enter your feed' : 'Continue';
-
-    const error = document.createElement('p');
-    error.className = 'auth-error';
-    error.setAttribute('role', 'status');
-    error.setAttribute('aria-live', 'polite');
-
-    dialogNode.append(close, eyebrow, title, content, error, next);
-
-    // STEP 2: Choose genres.
-    if (state.step === 2) {
-      title.textContent = 'What do you play?';
-
-      const copy = document.createElement('p');
-      copy.className = 'dialog-copy';
-      copy.textContent =
-        'Pick a few genres to tune your corner of Arcadia.';
-
-      content.append(copy);
-
-      for (const [value, label] of genreOptions) {
-        const button = document.createElement('button');
-
-        button.type = 'button';
-        button.className =
-          `interest-chip${state.genres.includes(value) ? ' is-selected' : ''}`;
-        button.textContent = label;
-        button.setAttribute(
-          'aria-pressed',
-          String(state.genres.includes(value))
-        );
-
-        button.addEventListener('click', () => {
-          state.genres = state.genres.includes(value)
-            ? state.genres.filter((item) => item !== value)
-            : [...state.genres, value];
-
-          render();
-        });
-
-        content.append(button);
-      }
-    }
-
-    // STEP 3: Choose favorite games.
-    else if (state.step === 3) {
-      title.textContent = 'Choose your games';
-
-      const search = document.createElement('input');
-      search.type = 'search';
-      search.placeholder = 'Search the catalog';
-      search.setAttribute('aria-label', 'Search favorite games');
-
-      content.append(search);
-
-      const results = document.createElement('div');
-      results.className = 'onboarding-games';
-      content.append(results);
-
-      const searchGames = async (term = '') => {
-        results.textContent = 'Loading games…';
-
-        try {
-          const data = await api(
-            `/games?limit=30${term ? `&q=${encodeURIComponent(term)}` : ''}`
-          );
-
-          results.replaceChildren();
-
-          for (const game of data.items) {
-            const button = document.createElement('button');
-
-            button.type = 'button';
-            button.className =
-              `interest-chip${state.games.includes(game.slug) ? ' is-selected' : ''}`;
-
-            button.textContent =
-              `${state.games.includes(game.slug) ? '✓ ' : ''}${game.name}`;
-
-            button.setAttribute(
-              'aria-pressed',
-              String(state.games.includes(game.slug))
-            );
-
-            button.addEventListener('click', () => {
-              state.games = state.games.includes(game.slug)
-                ? state.games.filter((slug) => slug !== game.slug)
-                : [...state.games, game.slug].slice(0, 20);
-
-              render();
-            });
-
-            results.append(button);
-          }
-
-          if (!data.items.length) {
-            results.textContent = 'No games found.';
-          }
-        } catch (e) {
-          results.textContent = e.message;
-        }
-      };
-
-      search.addEventListener('input', () => {
-        clearTimeout(searchGames.timer);
-
-        searchGames.timer = setTimeout(() => {
-          searchGames(search.value.trim());
-        }, 250);
-      });
-
-      void searchGames();
-    }
-
-    // STEP 4: Configure the player card and profile picture.
-    else if (state.step === 4) {
-      title.textContent = 'Your player card';
-
-      const name = document.createElement('input');
-      name.type = 'text';
-      name.maxLength = 40;
-      name.placeholder = 'Display name';
-      name.value = state.displayName;
-      name.setAttribute('aria-label', 'Display name');
-
-      name.addEventListener('input', () => {
-        state.displayName = name.value;
-
-        const preview = content.querySelector('.onboarding-avatar-preview');
-
-        if (
-          preview &&
-          !state.previewUrl &&
-          !(
-            typeof state.avatar === 'string' &&
-            /^https:\/\//i.test(state.avatar)
-          )
-        ) {
-          preview.textContent = getInitial();
-        }
-      });
-
-      const bio = document.createElement('textarea');
-      bio.maxLength = 280;
-      bio.placeholder = 'A short bio (optional)';
-      bio.value = state.bio;
-      bio.setAttribute('aria-label', 'Bio');
-
-      bio.addEventListener('input', () => {
-        state.bio = bio.value;
-      });
-
-      content.append(name, bio);
-
-      const photoHeading = document.createElement('p');
-      photoHeading.className = 'dialog-copy';
-      photoHeading.textContent = 'Make it yours';
-
-      const photoDescription = document.createElement('p');
-      photoDescription.className = 'dialog-copy';
-      photoDescription.textContent =
-        'Choose a profile photo or keep your favorite gradient.';
-
-      const avatarSection = document.createElement('div');
-      avatarSection.className = 'onboarding-avatar-section';
-
-      const preview = createAvatarPreview();
-
-      const photoInput = document.createElement('input');
-      photoInput.type = 'file';
-      photoInput.accept = 'image/jpeg,image/png,image/webp,image/gif';
-      photoInput.hidden = true;
-      photoInput.setAttribute('aria-label', 'Choose profile picture');
-
-      const photoButton = document.createElement('button');
-      photoButton.type = 'button';
-      photoButton.className = 'button button--secondary';
-      photoButton.textContent = state.photo
-        ? 'Change photo'
-        : 'Choose photo';
-
-      const photoHint = document.createElement('p');
-      photoHint.className = 'dialog-copy';
-      photoHint.textContent = 'JPEG, PNG, WebP or GIF · Maximum 5 MB';
-
-      photoButton.addEventListener('click', () => {
-        photoInput.click();
-      });
-
-      photoInput.addEventListener('change', () => {
-        const file = photoInput.files?.[0];
-
-        if (!file) return;
-
-        const allowedTypes = [
-          'image/jpeg',
-          'image/png',
-          'image/webp',
-          'image/gif',
-        ];
-
-        if (!allowedTypes.includes(file.type)) {
-          error.textContent =
-            'Choose a JPEG, PNG, WebP or GIF image.';
-          photoInput.value = '';
-          return;
-        }
-
-        if (file.size > 5 * 1024 * 1024) {
-          error.textContent =
-            'Your profile picture must be 5 MB or smaller.';
-          photoInput.value = '';
-          return;
-        }
-
-        clearPhotoPreview();
-
-        state.photo = file;
-        state.previewUrl = URL.createObjectURL(file);
-
-        // Remove the selected gradient when a photo is chosen.
-        state.avatar = null;
-
-        const image = document.createElement('img');
-        image.src = state.previewUrl;
-        image.alt = 'Selected profile picture preview';
-
-        preview.replaceChildren(image);
-        preview.className = 'onboarding-avatar-preview';
-
-        photoButton.textContent = 'Change photo';
-        error.textContent = '';
-      });
-
-      avatarSection.append(
-        preview,
-        photoButton,
-        photoInput,
-        photoHint
-      );
-
-      content.append(photoHeading, photoDescription, avatarSection);
-
-      const gradientHeading = document.createElement('p');
-      gradientHeading.className = 'dialog-copy';
-      gradientHeading.textContent = 'Or choose a generated avatar';
-
-      content.append(gradientHeading);
-
-      for (const avatar of gradientAvatars) {
-        const button = document.createElement('button');
-
-        button.type = 'button';
-        button.className =
-          `interest-chip ${avatar}${
-            !state.photo && state.avatar === avatar ? ' is-selected' : ''
-          }`;
-
-        button.textContent = avatar.replace('gradient-', '');
-
-        button.setAttribute(
-          'aria-pressed',
-          String(!state.photo && state.avatar === avatar)
-        );
-
-        button.addEventListener('click', () => {
-          state.photo = null;
-          clearPhotoPreview();
-          state.avatar = avatar;
-          render();
-        });
-
-        content.append(button);
-      }
-    }
-
-    // STEP 5: Welcome.
-    else {
-      title.textContent = 'Welcome to your circle';
-
-      const copy = document.createElement('p');
-      copy.className = 'dialog-copy';
-      copy.textContent =
-        'Your profile is ready. Find your games, share a highlight, and meet the players who make every match better.';
-
-      content.append(copy);
-    }
-
-    next.addEventListener('click', async () => {
-      next.disabled = true;
-      error.textContent = '';
-
-      try {
-        if (state.step === 2) {
-          const data = await api('/auth/profile', {
-            method: 'PATCH',
-            body: JSON.stringify({
-              genres: state.genres,
-            }),
-          });
-
-          currentUser = data.user;
-          state.step = 3;
-          render();
-        } else if (state.step === 3) {
-          const data = await api('/auth/profile', {
-            method: 'PATCH',
-            body: JSON.stringify({
-              favoriteGames: state.games,
-            }),
-          });
-
-          currentUser = data.user;
-          state.step = 4;
-          render();
-        } else if (state.step === 4) {
-          // Upload the selected photo first, if there is one.
-          if (state.photo) {
-            const formData = new FormData();
-            formData.append('photo', state.photo);
-
-            const uploadData = await api('/auth/avatar', {
-              method: 'POST',
-              body: formData,
-            });
-
-            currentUser = uploadData.user;
-            state.avatar = currentUser.avatar;
-            state.photo = null;
-            clearPhotoPreview();
-          }
-
-          // Save the rest of the player card.
-          const profileUpdate = {
-            displayName: state.displayName,
-            bio: state.bio,
-            onboardingComplete: true,
-          };
-
-          // Only send a generated avatar choice here.
-          // Uploaded photo URLs are saved by the avatar endpoint.
-          if (
-            !state.avatar ||
-            !/^https:\/\//i.test(state.avatar)
-          ) {
-            profileUpdate.avatar = gradientAvatars.includes(state.avatar)
-              ? state.avatar
-              : 'gradient-violet';
-          }
-
-          const data = await api('/auth/profile', {
-            method: 'PATCH',
-            body: JSON.stringify(profileUpdate),
-          });
-
-          currentUser = data.user;
-          state.step = 5;
-          render();
-        } else {
-          dialogNode.close();
-          cleanup();
-          updateSignedInUI();
-          selectView('feed');
-          toast('You’re all set.');
-        }
-      } catch (e) {
-        error.textContent = e.message || 'Something went wrong. Please try again.';
-        next.disabled = false;
-      }
-    });
-  };
-
-  dialogNode.addEventListener('close', cleanup, { once: true });
-
-  render();
-
-  if (!dialogNode.open) {
-    dialogNode.showModal();
-  }
+  onboarding.start();
 }
+
+notifications = createNotifications({
+  api,
+  getUser: () => currentUser,
+  button: $('#notifications-button'),
+  onNeedSignIn: () => openAuth(),
+  onOpenPost: async (postId) => {
+    try { const detail = await api(`/posts/${postId}`); openComments(detail.post, null); }
+    catch { toast('That post is no longer available.'); }
+  },
+  onOpenProfile: (username) => { if (!username) return; selectView('profile'); void renderProfile(username); },
+  onOpenFriends: () => selectView('friends'),
+});
+if (currentUser) notifications.refresh();
+
+presence.configure({
+  api,
+  getUser: () => currentUser,
+  onOpenFriends: () => selectView('friends'),
+  onNeedSignIn: () => openAuth(),
+  setAvatar,
+});
+presence.mountPanel($('#online-panel'));
+presence.sync();
 
 /* Arcadia profile, edit-profile sheet and settings.
    PASTE THIS OVER the old renderProfile, loadProfilePosts, editProfile and renderSettings
@@ -1799,10 +1451,500 @@ function uiEl(tag, className, text) {
   return node;
 }
 
+
 const PF_COVERS = ['nebula', 'sunset', 'ocean', 'pitch', 'dusk'];
-function pfHash(value) { let total = 0; for (const ch of String(value)) total = (total * 31 + ch.charCodeAt(0)) >>> 0; return total; }
-function pfCover(seed) { return `/assets/arcadia/covers/cover-${PF_COVERS[pfHash(seed) % PF_COVERS.length]}.svg`; }
-function pfGameName(game) { return typeof game === 'string' ? game : (game?.name || game?.title || game?.slug || String(game)); }
+
+function pfHash(value) {
+  let total = 0;
+
+  for (const ch of String(value)) {
+    total = (total * 31 + ch.charCodeAt(0)) >>> 0;
+  }
+
+  return total;
+}
+
+function pfCover(seed) {
+  return `/assets/arcadia/covers/cover-${PF_COVERS[pfHash(seed) % PF_COVERS.length]}.svg`;
+}
+
+function pfGameName(game) {
+  return typeof game === 'string'
+    ? game
+    : (game?.name || game?.title || game?.slug || String(game));
+}
+
+
+// ========================================
+// ARCADIA GAME CATALOGUE
+// ========================================
+
+const ARCADIA_GAME_CATALOG = {
+  'fc mobile': {
+    title: 'EA SPORTS FC Mobile',
+    banner: 'fc-mobile-banner.jpg',
+    cover: 'fc-mobile.jpg',
+    genre: 'Football · Sports',
+    developer: 'EA SPORTS',
+    platforms: 'iOS · Android',
+    description: 'Build your ultimate football squad, collect legendary players and compete in fast-paced football matches. Take your club through competitive events, seasonal campaigns and head-to-head battles.'
+  },
+
+  'pubg mobile': {
+    title: 'PUBG MOBILE',
+    banner: 'pubg-mobile-banner.jpg',
+    cover: 'pubg-mobile.jpg',
+    genre: 'Battle Royale · Shooter',
+    developer: 'Level Infinite',
+    platforms: 'iOS · Android',
+    description: 'Drop into a massive battleground, scavenge for equipment and fight to survive. PUBG MOBILE combines tactical decisions, squad coordination and intense last-player-standing competition.'
+  },
+
+  'call of duty mobile': {
+    title: 'Call of Duty: Mobile',
+    banner: 'call-of-duty-mobile-banner.jpg',
+    cover: 'call-of-duty-mobile.jpg',
+    genre: 'FPS · Action',
+    developer: 'Activision',
+    platforms: 'iOS · Android',
+    description: 'Experience fast-paced multiplayer combat, iconic maps and intense battle royale matches. Build your loadout, master different weapons and compete across a variety of game modes.'
+  },
+
+  'call of duty': {
+    title: 'Call of Duty: Mobile',
+    banner: 'call-of-duty-mobile-banner.jpg',
+    cover: 'call-of-duty-mobile.jpg',
+    genre: 'FPS · Action',
+    developer: 'Activision',
+    platforms: 'iOS · Android',
+    description: 'Experience fast-paced multiplayer combat, iconic maps and intense battle royale matches. Build your loadout, master different weapons and compete across a variety of game modes.'
+  },
+
+  'free fire': {
+    title: 'Garena Free Fire',
+    banner: 'free-fire-banner.jpg',
+    cover: 'free-fire.jpg',
+    genre: 'Battle Royale · Shooter',
+    developer: 'Garena',
+    platforms: 'iOS · Android',
+    description: 'Enter quick, action-packed survival matches where positioning, precision and smart decisions matter. Choose your character, build your strategy and fight to become the last survivor.'
+  },
+
+  'efootball': {
+    title: 'eFootball',
+    banner: 'efootball-banner.jpg',
+    cover: 'efootball.jpg',
+    genre: 'Football · Sports',
+    developer: 'Konami',
+    platforms: 'iOS · Android · PC · Console',
+    description: 'Experience digital football with real clubs, players and competitive match modes. Build your dream team, develop your tactics and take your football ambitions onto the pitch.'
+  },
+
+  'roblox': {
+    title: 'Roblox',
+    banner: 'roblox-banner.jpg',
+    cover: 'roblox.jpg',
+    genre: 'Sandbox · Social',
+    developer: 'Roblox Corporation',
+    platforms: 'iOS · Android · PC · Console',
+    description: 'Explore a vast universe of player-created experiences. From adventure and role-playing to simulations and competitive games, Roblox is a platform for discovering and creating worlds.'
+  },
+
+  'minecraft': {
+    title: 'Minecraft',
+    banner: 'minecraft-banner.jpg',
+    cover: 'minecraft.jpg',
+    genre: 'Sandbox · Survival',
+    developer: 'Mojang Studios',
+    platforms: 'Mobile · PC · Console',
+    description: 'Shape entire worlds one block at a time. Gather resources, build extraordinary structures, explore dangerous environments and create your own adventures in an open-ended sandbox.'
+  },
+
+  'fortnite': {
+    title: 'Fortnite',
+    banner: 'fortnite-banner.jpg',
+    cover: 'fortnite.jpg',
+    genre: 'Battle Royale · Action',
+    developer: 'Epic Games',
+    platforms: 'PC · Console · Supported mobile devices',
+    description: 'Jump into a constantly evolving universe of competitive battles, creative experiences and live events. Build, explore and compete in a world that keeps changing.'
+  },
+
+  
+  'among us': {
+    title: 'Among Us',
+    banner: '',
+    cover: 'among-us.jpg',
+    genre: 'Social Deduction · Multiplayer',
+    developer: 'Innersloth',
+    platforms: 'iOS · Android · PC · Console',
+    description: 'Work together aboard a spaceship, complete tasks and uncover the impostors hiding among the crew. Deception, teamwork and suspicion make every round unpredictable.'
+  },
+
+  'apex legends': {
+    title: 'Apex Legends',
+    banner: '',
+    cover: 'apex-legends.jpg',
+    genre: 'Battle Royale · FPS',
+    developer: 'Respawn Entertainment',
+    platforms: 'PC · Console',
+    description: 'Enter a futuristic battle royale where unique Legends bring their own abilities to the battlefield. Coordinate with your squad, master your weapons and fight for champion status.'
+  },
+
+  'asphalt legends unite': {
+    title: 'Asphalt Legends Unite',
+    banner: '',
+    cover: 'asphalt-legends-unite.jpg',
+    genre: 'Racing · Arcade',
+    developer: 'Gameloft',
+    platforms: 'Mobile · PC · Console',
+    description: 'Race exotic supercars across spectacular locations, perform gravity-defying stunts and compete against players in high-speed arcade racing.'
+  },
+
+  'dota 2': {
+    title: 'Dota 2',
+    banner: '',
+    cover: 'dota-2.jpg',
+    genre: 'MOBA · Strategy',
+    developer: 'Valve',
+    platforms: 'PC',
+    description: 'Choose from a vast roster of heroes and battle in a competitive multiplayer arena. Strategy, teamwork, timing and mastery shape every match.'
+  },
+
+  'elden ring': {
+    title: 'Elden Ring',
+    banner: '',
+    cover: 'elden-ring.jpg',
+    genre: 'Action RPG · Open World',
+    developer: 'FromSoftware',
+    platforms: 'PC · PlayStation · Xbox',
+    description: 'Explore the vast Lands Between, face formidable enemies and uncover a mysterious world filled with secrets, ancient powers and challenging combat.'
+  },
+
+  'ea sports fc': {
+    title: 'EA SPORTS FC',
+    banner: '',
+    cover: 'ea-sports-fc.jpg',
+    genre: 'Football · Sports',
+    developer: 'EA SPORTS',
+    platforms: 'PC · PlayStation · Xbox · Nintendo Switch',
+    description: 'Experience club football with authentic teams, players and competitions. Build your squad, develop your tactics and compete across multiple football modes.'
+  },
+
+  'forza horizon 5': {
+    title: 'Forza Horizon 5',
+    banner: '',
+    cover: 'forza-horizon-5.jpg',
+    genre: 'Racing · Open World',
+    developer: 'Playground Games',
+    platforms: 'PC · Xbox · PlayStation',
+    description: 'Explore a vibrant open-world version of Mexico, collect incredible cars and take on races, challenges and automotive adventures.'
+  },
+
+  'genshin impact': {
+    title: 'Genshin Impact',
+    banner: '',
+    cover: 'genshin-impact.jpg',
+    genre: 'Action RPG · Adventure',
+    developer: 'HoYoverse',
+    platforms: 'Mobile · PC · PlayStation',
+    description: 'Journey through the fantasy world of Teyvat, discover elemental powers, meet memorable characters and uncover the mysteries of a sprawling adventure.'
+  },
+
+  'grand theft auto v': {
+    title: 'Grand Theft Auto V',
+    banner: '',
+    cover: 'gta-v.jpg',
+    genre: 'Action · Open World',
+    developer: 'Rockstar Games',
+    platforms: 'PC · PlayStation · Xbox',
+    description: 'Explore Los Santos through interconnected stories of crime, ambition and survival. Experience an expansive open world and the ever-evolving GTA Online universe.'
+  },
+
+  'gta v': {
+    title: 'Grand Theft Auto V',
+    banner: '',
+    cover: 'gta-v.jpg',
+    genre: 'Action · Open World',
+    developer: 'Rockstar Games',
+    platforms: 'PC · PlayStation · Xbox',
+    description: 'Explore Los Santos through interconnected stories of crime, ambition and survival. Experience an expansive open world and the ever-evolving GTA Online universe.'
+  },
+
+  'league of legends': {
+    title: 'League of Legends',
+    banner: '',
+    cover: 'league-of-legends.jpg',
+    genre: 'MOBA · Strategy',
+    developer: 'Riot Games',
+    platforms: 'PC',
+    description: 'Choose a champion, build your strategy and compete in tactical five-versus-five battles. Team coordination and smart decisions determine victory.'
+  },
+
+  'overwatch 2': {
+    title: 'Overwatch 2',
+    banner: '',
+    cover: 'overwatch-2.jpg',
+    genre: 'Hero Shooter · Action',
+    developer: 'Blizzard Entertainment',
+    platforms: 'PC · Console',
+    description: 'Join a team-based hero shooter featuring distinctive characters, powerful abilities and objective-driven battles across a variety of maps.'
+  },
+
+  'rainbow six siege': {
+    title: 'Rainbow Six Siege',
+    banner: '',
+    cover: 'rainbow-six-siege.jpg',
+    genre: 'Tactical FPS · Shooter',
+    developer: 'Ubisoft',
+    platforms: 'PC · PlayStation · Xbox',
+    description: 'Experience tactical team-based combat where preparation, destruction and precise coordination can decide the outcome of every round.'
+  },
+
+  'rocket league': {
+    title: 'Rocket League',
+    banner: '',
+    cover: 'rocket-league.jpg',
+    genre: 'Sports · Racing',
+    developer: 'Psyonix',
+    platforms: 'PC · PlayStation · Xbox · Nintendo Switch',
+    description: 'Drive rocket-powered cars, perform aerial manoeuvres and score spectacular goals in a competitive blend of football and vehicular action.'
+  },
+
+  'stardew valley': {
+    title: 'Stardew Valley',
+    banner: '',
+    cover: 'stardew-valley.jpg',
+    genre: 'Simulation · Farming RPG',
+    developer: 'ConcernedApe',
+    platforms: 'Mobile · PC · Console',
+    description: 'Build a peaceful life in the countryside. Grow crops, raise animals, explore caves, build relationships and restore your grandfather’s farm.'
+  },
+
+  'tekken 8': {
+    title: 'TEKKEN 8',
+    banner: '',
+    cover: 'tekken-8.jpg',
+    genre: 'Fighting · Action',
+    developer: 'Bandai Namco Studios',
+    platforms: 'PC · PlayStation · Xbox',
+    description: 'Enter the next chapter of the legendary fighting series. Master powerful fighters, learn complex combos and compete in intense one-on-one battles.'
+  },
+
+  'the sims 4': {
+    title: 'The Sims 4',
+    banner: '',
+    cover: 'the-sims-4.jpg',
+    genre: 'Life Simulation',
+    developer: 'Maxis',
+    platforms: 'PC · PlayStation · Xbox',
+    description: 'Create characters, design homes and guide lives through an open-ended simulation full of relationships, careers, creativity and unexpected stories.'
+  },
+
+  'valorant': {
+    title: 'VALORANT',
+    banner: '',
+    cover: 'valorant.jpg',
+    genre: 'Tactical FPS · Hero Shooter',
+    developer: 'Riot Games',
+    platforms: 'PC · Console',
+    description: 'Combine precise gunplay with distinctive agent abilities in competitive five-versus-five tactical matches. Strategy, teamwork and aim are essential.'
+  }
+
+};
+
+
+const ARCADIA_GAME_FONTS = {
+  'pubg mobile': '"Arial Narrow", sans-serif',
+  'call of duty mobile': '"Impact", sans-serif',
+  'free fire': '"Arial Black", sans-serif',
+  'minecraft': '"Minecraftia", monospace',
+  'fortnite': '"Burbank Big Condensed", "Arial Narrow", sans-serif',
+  'valorant': '"DIN Next LT Pro", "Arial Narrow", sans-serif',
+  'gta v': '"Pricedown", "Arial Black", sans-serif',
+  'grand theft auto v': '"Pricedown", "Arial Black", sans-serif',
+  'league of legends': '"Beaufort for LOL", Georgia, serif'
+};
+
+
+const ARCADIA_GAME_THEMES = {
+  'fc mobile': {
+    accent: '#00D879',
+    secondary: '#A6FFCB',
+    background: '#07150F',
+    surface: '#10251A',
+    text: '#F4FFF8'
+  },
+
+  'pubg mobile': {
+    accent: '#F5A623',
+    secondary: '#FFD58A',
+    background: '#17130D',
+    surface: '#292116',
+    text: '#FFF9EF'
+  },
+
+  'call of duty mobile': {
+    accent: '#D6B66A',
+    secondary: '#F0D99C',
+    background: '#14150F',
+    surface: '#25271C',
+    text: '#F8F8EE'
+  },
+
+  'free fire': {
+    accent: '#FF6B35',
+    secondary: '#FFB36B',
+    background: '#190D0A',
+    surface: '#2D1710',
+    text: '#FFF5EF'
+  },
+
+  'efootball': {
+    accent: '#00A9E8',
+    secondary: '#79DCFF',
+    background: '#07121D',
+    surface: '#102538',
+    text: '#F0FAFF'
+  },
+
+  'minecraft': {
+    accent: '#78B94A',
+    secondary: '#A9D879',
+    background: '#101A10',
+    surface: '#1B2A19',
+    text: '#F5FFF0'
+  },
+
+  'valorant': {
+    accent: '#FF4655',
+    secondary: '#FF8992',
+    background: '#16090C',
+    surface: '#291116',
+    text: '#FFF5F5'
+  },
+
+  'fortnite': {
+    accent: '#9B7BFF',
+    secondary: '#64D9FF',
+    background: '#100E20',
+    surface: '#211B3C',
+    text: '#F7F4FF'
+  },
+
+  'roblox': {
+    accent: '#FFFFFF',
+    secondary: '#B8B8B8',
+    background: '#111111',
+    surface: '#242424',
+    text: '#FFFFFF'
+  },
+
+  'among us': {
+    accent: '#FF5656',
+    secondary: '#FF9B9B',
+    background: '#160D13',
+    surface: '#291820',
+    text: '#FFF5F7'
+  },
+
+  'apex legends': {
+    accent: '#E84B3C',
+    secondary: '#FF9B8E',
+    background: '#1A0E0D',
+    surface: '#301A18',
+    text: '#FFF5F3'
+  },
+
+  'genshin impact': {
+    accent: '#73C9D8',
+    secondary: '#B6E8ED',
+    background: '#0D1820',
+    surface: '#1B303B',
+    text: '#F1FBFF'
+  },
+
+  'gta v': {
+    accent: '#8BC34A',
+    secondary: '#D2E69B',
+    background: '#10150D',
+    surface: '#20291A',
+    text: '#F7FBEF'
+  },
+
+  'league of legends': {
+    accent: '#C8A45D',
+    secondary: '#EBD49B',
+    background: '#10151D',
+    surface: '#1D2A39',
+    text: '#F8F5ED'
+  },
+
+  'rocket league': {
+    accent: '#36A9FF',
+    secondary: '#9BD8FF',
+    background: '#081321',
+    surface: '#12263B',
+    text: '#F2F9FF'
+  }
+};
+
+
+function getArcadiaGameFont(gameTitle) {
+  const key = String(gameTitle)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+
+  return ARCADIA_GAME_FONTS[key] || '"Segoe UI", sans-serif';
+}
+
+
+
+// ========================================
+// GAME LOOKUP
+// ========================================
+
+
+function getArcadiaGame(gameName) {
+  const originalName = pfGameName(gameName);
+
+  const key = String(originalName)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+
+  const aliases = {
+    'ea sports fc mobile': 'fc mobile',
+    'fifa mobile': 'fc mobile',
+    'pubg': 'pubg mobile',
+    'cod mobile': 'call of duty mobile',
+    'call of duty': 'call of duty mobile',
+    'garena free fire': 'free fire',
+    'grand theft auto v': 'gta v',
+    'gta 5': 'gta v',
+    'asphalt': 'asphalt legends unite',
+    'rainbow six': 'rainbow six siege',
+    'lol': 'league of legends'
+  };
+
+  const resolvedKey = aliases[key] || key;
+
+  return ARCADIA_GAME_CATALOG[resolvedKey] || {
+    title: originalName,
+    banner: '',
+    cover: '',
+    genre: 'Video game',
+    developer: 'Not listed',
+    platforms: 'Not listed',
+    description: 'Discover this game and learn more about what makes it worth playing.'
+  };
+}
+
+
 function pfTile(name) {
   const initials = String(name).split(/\s+/).filter(Boolean).slice(0, 2).map((word) => word[0]).join('').toUpperCase() || '?';
   const tile = uiEl('span', 'pf-tile', initials);
@@ -1810,6 +1952,95 @@ function pfTile(name) {
   tile.setAttribute('aria-hidden', 'true');
   return tile;
 }
+
+
+function pfAboutGameCover(name) {
+  const aliases = {
+    'among us': 'among-us',
+    'asphalt legends unite': 'asphalt-legends-unite',
+    'call of duty': 'call-of-duty-mobile',
+    'call of duty mobile': 'call-of-duty-mobile',
+    'call of duty: mobile': 'call-of-duty-mobile',
+    'dota 2': 'dota-2',
+    'ea sports fc': 'ea-sports-fc',
+    'efootball': 'efootball',
+    'elden ring': 'elden-ring',
+    'fc mobile': 'fc-mobile',
+    'free fire': 'free-fire',
+    'genshin impact': 'genshin-impact',
+    'gta v': 'gta-v',
+    'grand theft auto v': 'gta-v',
+    'league of legends': 'league-of-legends',
+    'minecraft': 'minecraft',
+    'pubg mobile': 'pubg-mobile',
+    'rainbow six siege': 'rainbow-six-siege',
+    'roblox': 'roblox',
+    'rocket league': 'rocket-league',
+    'stardew valley': 'stardew-valley',
+    'tekken 8': 'tekken-8',
+    'the sims 4': 'the-sims-4',
+    'valorant': 'valorant',
+    'fortnite': 'fortnite',
+    'forza horizon 5': 'forza-horizon-5'
+  };
+
+  const slugAliases = {
+    'fc-mobile': 'fc-mobile',
+    'ea-sports-fc': 'ea-sports-fc',
+    'call-of-duty': 'call-of-duty-mobile',
+    'call-of-duty-mobile': 'call-of-duty-mobile',
+    'apex-legends': 'apex-legends',
+    'overwatch-2': 'overwatch-2',
+    'asphalt-legends-unite': 'asphalt-legends-unite',
+    'dota-2': 'dota-2',
+    'elden-ring': 'elden-ring',
+    'free-fire': 'free-fire',
+    'genshin-impact': 'genshin-impact',
+    'gta-v': 'gta-v',
+    'league-of-legends': 'league-of-legends',
+    'pubg-mobile': 'pubg-mobile',
+    'rainbow-six-siege': 'rainbow-six-siege',
+    'rocket-league': 'rocket-league',
+    'stardew-valley': 'stardew-valley',
+    'tekken-8': 'tekken-8',
+    'the-sims-4': 'the-sims-4',
+    'forza-horizon-5': 'forza-horizon-5',
+    'among-us': 'among-us',
+    'efootball': 'efootball',
+    'fortnite': 'fortnite',
+    'minecraft': 'minecraft',
+    'roblox': 'roblox',
+    'valorant': 'valorant'
+  };
+
+  const key = String(name).trim().toLowerCase();
+  const slug = aliases[key] || slugAliases[key];
+
+  const cover = document.createElement('img');
+  cover.className = 'pf-about-game-cover';
+  cover.alt = '';
+  cover.loading = 'lazy';
+  cover.decoding = 'async';
+
+  if (slug) {
+    cover.src = `/assets/arcadia/games/${slug}.jpg`;
+
+    cover.addEventListener('error', () => {
+      console.error(
+        'Arcadia game cover failed to load:',
+        cover.src,
+        'Game:',
+        name
+      );
+    });
+  } else {
+    console.warn('Arcadia game has no artwork mapping:', name);
+    cover.hidden = true;
+  }
+
+  return cover;
+}
+
 function pfDaysText(createdAt) {
   const days = Math.floor((Date.now() - new Date(createdAt).getTime()) / 86400000);
   if (!Number.isFinite(days)) return '';
@@ -1906,7 +2137,7 @@ else if (info.status === 'friends') {
 
 function fdAvatar(person) {
   const name = person.displayName || person.username;
-  const node = uiEl('span', `fd-avatar ${person.avatar || ''}`.trim(), name[0].toUpperCase());
+  const node = uiEl('span', 'fd-avatar', name[0].toUpperCase()); setAvatar(node, person.avatar, name[0].toUpperCase()); presence.mark(node, person.username);
   node.setAttribute('aria-hidden', 'true');
   return node;
 }
@@ -1915,7 +2146,7 @@ function fdRow(person, fill) {
   const row = uiEl('div', 'fd-item');
   const main = uiEl('button', 'fd-main'); main.type = 'button';
   main.setAttribute('aria-label', `Open ${person.displayName || person.username}'s profile`);
-  main.append(uiEl('span', 'fd-name', person.displayName || person.username), uiEl('span', 'fd-handle', `@${person.username}`));
+  main.append(uiEl('span', 'fd-name', person.displayName || person.username), presence.bindLabel(uiEl('span', 'fd-handle', `@${person.username}`), person.username, `@${person.username}`, `@${person.username} · `));
   if (person.bio) main.append(uiEl('span', 'fd-bio', person.bio));
   main.addEventListener('click', () => { selectView('profile'); void renderProfile(person.username); });
   const actions = uiEl('div', 'fd-actions');
@@ -2042,7 +2273,7 @@ if (messaging) {
   } catch (e) { body.replaceChildren(pfEmpty('empty-posts', 'Friends unavailable', e.message || 'Could not load your friends.')); }
 }
 
-async function renderProfile(username = currentUser?.username) {
+async function renderProfile(username = currentUser?.username, initialTab = 'posts') {
   const host = $('#view-profile'); if (!host) return;
   host.replaceChildren();
   host.append(uiEl('h1', 'sr-only', username ? 'Player profile' : 'Profile'));
@@ -2056,14 +2287,30 @@ async function renderProfile(username = currentUser?.username) {
   try {
     const data = await api(`/auth/profiles/${encodeURIComponent(username)}`);
     const user = data.user;
+     const profileUsername = user.username;
     card.replaceChildren();
     const display = user.displayName || user.username;
     const isSelf = currentUser?.username === user.username;
     const games = (user.favoriteGames || []).map(pfGameName);
 
-    const cover = uiEl('div', 'pf-cover'); cover.style.backgroundImage = `url(${pfCover(user.username)})`; cover.setAttribute('aria-hidden', 'true');
+    const cover = uiEl('div', 'pf-cover'); applyBanner(cover, user, pfCover(user.username)); cover.setAttribute('aria-hidden', 'true');
+    const bannerGame = games[0];
+
+if (bannerGame) {
+  const gameInfo = getArcadiaGame(bannerGame);
+
+  if (gameInfo.banner) {
+    const probe = new Image();
+
+    probe.onload = () => {
+      cover.style.backgroundImage = `url("${probe.src}")`;
+    };
+
+    probe.src = `/assets/arcadia/games/${gameInfo.banner}`;
+  }
+}
     const head = uiEl('div', 'pf-head');
-    const avatar = uiEl('div', `pf-avatar ${user.avatar || 'gradient-violet'}`, display[0].toUpperCase()); avatar.setAttribute('aria-hidden', 'true');
+    const avatar = uiEl('div', 'pf-avatar', display[0].toUpperCase()); setAvatar(avatar, user.avatar || 'gradient-violet', display[0].toUpperCase()); presence.mark(avatar, user.username); avatar.setAttribute('aria-hidden', 'true');
     const ident = uiEl('div', 'pf-id'); ident.append(uiEl('h2', 'pf-name', display), uiEl('p', 'pf-handle', `@${user.username}`));
     const actions = uiEl('div', 'pf-actions');
     if (isSelf) {
@@ -2118,18 +2365,241 @@ async function renderProfile(username = currentUser?.username) {
         ? pfEmpty('empty-games', 'No games picked yet', 'Choose the games you play and Arcadia will tune your feed to them.', 'Choose games', (event) => startOnboarding(event))
         : pfEmpty('empty-games', 'No games yet', `${display} hasn't picked favorite games yet.`));
     }
-    const about = uiEl('dl', 'pf-about');
-    const addRow = (label, value) => { if (!value) return; const row = document.createElement('div'); row.append(uiEl('dt', '', label), uiEl('dd', '', value)); about.append(row); };
-    addRow('Display name', display); addRow('Username', `@${user.username}`); addRow('Bio', user.bio);
-    addRow('Member for', pfDaysText(user.createdAt)); addRow('Favorite games', games.join(', '));
+    
+    const about = uiEl('div', 'pf-ab');
+
+    // Bio + basic facts
+    const bioSection = uiEl('section', 'pf-ab-section');
+    const bioHead = uiEl('div', 'pf-ab-head');
+    bioHead.append(uiEl('h3', 'pf-ab-title', 'About'));
+    bioSection.append(bioHead);
+    bioSection.append(uiEl(
+      'p',
+      `pf-ab-bio${user.bio ? '' : ' is-empty'}`,
+      user.bio || (isSelf ? 'You haven’t written a bio yet.' : `${display} hasn’t written a bio yet.`)
+    ));
+    if (isSelf && !user.bio) {
+      const addBio = uiEl('button', 'pf-ab-link', 'Add a bio');
+      addBio.type = 'button';
+      addBio.addEventListener('click', () => openEditProfile(user));
+      bioSection.append(addBio);
+    }
+
+    const facts = uiEl('dl', 'pf-ab-facts');
+    const addFact = (label, value) => {
+      const row = uiEl('div', 'pf-ab-fact');
+      row.append(uiEl('dt', '', label), uiEl('dd', '', value));
+      facts.append(row);
+    };
+    addFact('Username', `@${user.username}`);
+    const memberSince = new Date(user.createdAt);
+    if (!Number.isNaN(memberSince.getTime())) {
+      addFact('Member since', memberSince.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }));
+    }
+    if (games.length) addFact('Favourite games', String(games.length));
+    bioSection.append(facts);
+    about.append(bioSection);
+
+    // Favourite games: a plain row of covers, each opens the game page
+    if (games.length) {
+      const gamesSection = uiEl('section', 'pf-ab-section');
+      const gamesHead = uiEl('div', 'pf-ab-head');
+      gamesHead.append(uiEl('h3', 'pf-ab-title', 'Favourite games'));
+      const seeAll = uiEl('button', 'pf-ab-link', games.length > 6 ? `See all ${games.length}` : 'Open collection');
+      seeAll.type = 'button';
+      seeAll.addEventListener('click', () => { void openGameLibrary(games, profileUsername); });
+      gamesHead.append(seeAll);
+      gamesSection.append(gamesHead);
+
+      const row = uiEl('div', 'pf-ab-games');
+      for (const name of games.slice(0, 6)) {
+        const info = getArcadiaGame(name);
+        const item = uiEl('button', 'pf-ab-game');
+        item.type = 'button';
+        const cover = uiEl('img', 'pf-ab-game-cover');
+        cover.src = arcGameCoverSrc(info);
+        cover.alt = '';
+        cover.loading = 'lazy';
+        cover.decoding = 'async';
+        item.append(cover, uiEl('span', 'pf-ab-game-name', info.title));
+        item.addEventListener('click', () => { openGameDetails(info, games, profileUsername); });
+        row.append(item);
+      }
+      gamesSection.append(row);
+      about.append(gamesSection);
+    }
+
     panelNodes.about.append(about);
 
     card.append(cover, head, bio, chips, tabs, panels);
-    select('posts');
+    select(initialTab);
     void loadProfilePosts(user.username, list);
   } catch (e) {
     card.replaceChildren(pfEmpty('empty-posts', 'Profile unavailable', e.message || 'Could not load this profile.'));
   }
+}
+
+function arcGameCoverSrc(info) {
+  return info.cover ? `/assets/arcadia/games/${info.cover}` : pfCover(info.title);
+}
+
+function arcGameTheme(info) {
+  const themeKey = String(info.title).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
+  const themeAliases = { 'ea sports fc mobile': 'fc mobile', 'grand theft auto v': 'gta v' };
+  return ARCADIA_GAME_THEMES[themeAliases[themeKey] || themeKey] || {
+    accent: '#A78BFA',
+    background: '#1D1B26'
+  };
+}
+
+/*
+  Reusable detail page (styles: .gd in css/arcadia-clean.css).
+  Order: back, hero, title, kicker, description, facts.
+  Use it for any "one item" page, for example a community or an update:
+
+    host.replaceChildren(arcDetailPage({
+      title, kicker, description,
+      facts: [['Members', '1.2k'], ['Created', 'May 2025']],
+      banner, poster, accent, heroColor,
+      backLabel: 'Back to communities',
+      onBack: () => { ... }
+    }));
+*/
+function arcDetailPage({
+  title,
+  kicker = '',
+  description = '',
+  facts = [],
+  banner = '',
+  poster = '',
+  accent = '',
+  heroColor = '',
+  titleFont = '',
+  backLabel = 'Back',
+  onBack
+}) {
+  const page = uiEl('article', 'gd');
+  if (accent) page.style.setProperty('--gd-accent', accent);
+  if (heroColor) page.style.setProperty('--gd-hero', heroColor);
+  if (titleFont) page.style.setProperty('--gd-title-font', titleFont);
+
+  const back = uiEl('button', 'gd-back');
+  back.type = 'button';
+  back.append(uiEl('span', '', '‹'), uiEl('span', '', backLabel));
+  back.addEventListener('click', () => { if (typeof onBack === 'function') onBack(); });
+
+  const card = uiEl('div', 'gd-card');
+
+  const hero = uiEl('div', 'gd-hero');
+  hero.setAttribute('aria-hidden', 'true');
+  const showPoster = () => {
+    if (!poster || hero.querySelector('.gd-poster')) return;
+    const img = uiEl('img', 'gd-poster');
+    img.src = poster;
+    img.alt = '';
+    hero.append(img);
+  };
+  if (banner) {
+    const probe = new Image();
+    probe.onload = () => { hero.style.backgroundImage = `url("${banner}")`; };
+    probe.onerror = showPoster;
+    probe.src = banner;
+  } else {
+    showPoster();
+  }
+
+  const body = uiEl('div', 'gd-body');
+  body.append(uiEl('h1', 'gd-title', title));
+  if (kicker) body.append(uiEl('p', 'gd-kicker', kicker));
+  if (description) body.append(uiEl('p', 'gd-desc', description));
+
+  const shownFacts = facts.filter(([, value]) => value);
+  if (shownFacts.length) {
+    const list = uiEl('dl', 'gd-facts');
+    for (const [label, value] of shownFacts) {
+      const item = uiEl('div', 'gd-fact');
+      item.append(uiEl('dt', '', label), uiEl('dd', '', value));
+      list.append(item);
+    }
+    body.append(list);
+  }
+
+  card.append(hero, body);
+  page.append(back, card);
+  return page;
+}
+
+async function openGameLibrary(games = [], username = currentUser?.username) {
+  const host = $('#view-profile');
+  if (!host) return;
+
+  const page = uiEl('section', 'gc');
+
+  const top = uiEl('div', 'gc-top');
+  const back = uiEl('button', 'gc-back', '‹');
+  back.type = 'button';
+  back.setAttribute('aria-label', 'Back to profile');
+  back.title = 'Back to profile';
+  back.addEventListener('click', () => { void renderProfile(username, 'about'); });
+
+  const heading = uiEl('div', 'gc-heading');
+  heading.append(
+    uiEl('h1', 'gc-title', 'Game collection'),
+    uiEl('p', 'gc-count', `${games.length} ${games.length === 1 ? 'game' : 'games'}`)
+  );
+  top.append(back, heading);
+
+  const grid = uiEl('div', 'gc-grid');
+  if (games.length === 0) {
+    grid.append(uiEl('div', 'gc-empty', 'No favourite games added yet.'));
+  }
+
+  for (const game of games) {
+    const info = getArcadiaGame(game);
+    const item = uiEl('button', 'gc-item');
+    item.type = 'button';
+
+    const image = uiEl('img', 'gc-cover');
+    image.src = arcGameCoverSrc(info);
+    image.alt = '';
+    image.loading = 'lazy';
+
+    const meta = uiEl('span', 'gc-meta');
+    meta.append(uiEl('span', 'gc-name', info.title), uiEl('span', 'gc-genre', info.genre));
+
+    item.append(image, meta);
+    item.addEventListener('click', () => { openGameDetails(info, games, username); });
+    grid.append(item);
+  }
+
+  page.append(top, grid);
+  host.replaceChildren(page);
+  window.scrollTo({ top: 0 });
+}
+
+function openGameDetails(info, games = [], username = currentUser?.username) {
+  const host = $('#view-profile');
+  if (!host) return;
+
+  const theme = arcGameTheme(info);
+
+  host.replaceChildren(arcDetailPage({
+    title: info.title,
+    kicker: info.genre,
+    description: info.description,
+    facts: [
+      ['Developer', info.developer],
+      ['Platforms', info.platforms]
+    ],
+    banner: info.banner ? `/assets/arcadia/games/${info.banner}` : '',
+    poster: info.cover ? `/assets/arcadia/games/${info.cover}` : '',
+    accent: theme.accent,
+    heroColor: theme.background,
+    titleFont: getArcadiaGameFont(info.title),
+    backLabel: 'Back to collection',
+    onBack: () => { void openGameLibrary(games, username); }
+  }));
+  window.scrollTo({ top: 0 });
 }
 
 async function loadProfilePosts(username,host,cursor=null){try{const data=await api(`/auth/profiles/${encodeURIComponent(username)}/posts?limit=10${cursor?`&cursor=${encodeURIComponent(cursor)}`:''}`);host.append(...data.items.map(renderPost));if(!data.items.length&&!cursor){const note=document.createElement('p');note.className='catalog-message';note.textContent='No public posts yet.';host.append(note);}if(data.nextCursor){let more=$('.profile-load-more',host);if(!more){more=document.createElement('button');more.className='button profile-load-more';more.type='button';more.textContent='Load more posts';host.append(more);}more.onclick=()=>{more.disabled=true;more.remove();void loadProfilePosts(username,host,data.nextCursor);};}}catch(error){const note=document.createElement('p');note.textContent=error.message;host.append(note);}}
@@ -2154,7 +2624,110 @@ function openEditProfile(user) {
   const gamesText = uiEl('div', 'st-text'); gamesText.append(uiEl('div', 'st-label', 'Favorite games'), uiEl('p', 'st-desc', (user.favoriteGames || []).map(pfGameName).join(', ') || 'Not picked yet'));
   const change = uiEl('button', 'button', 'Change'); change.type = 'button'; change.addEventListener('click', (event) => { dialog.close(); startOnboarding(event); });
   gamesRow.append(gamesText, change);
-  body.append(nameField, bioField, gamesRow);
+
+  // Profile photo: upload, replace or remove. Saved straight away.
+  const photoField = uiEl('div', 'field avatar-edit');
+  const initial = (user.displayName || user.username || '?')[0].toUpperCase();
+  const photoPreview = uiEl('div', 'pf-avatar avatar-edit__preview', initial);
+  setAvatar(photoPreview, user.avatar || 'gradient-violet', initial);
+  photoPreview.setAttribute('aria-hidden', 'true');
+  const photoText = uiEl('div', 'avatar-edit__text');
+  const photoButtons = uiEl('div', 'avatar-edit__buttons');
+  const photoFile = document.createElement('input'); photoFile.type = 'file'; photoFile.accept = 'image/jpeg,image/png,image/webp,image/gif'; photoFile.hidden = true;
+  const choosePhoto = uiEl('button', 'button', isPhotoAvatar(user.avatar) ? 'Change photo' : 'Upload photo'); choosePhoto.type = 'button';
+  const removePhoto = uiEl('button', 'button', 'Remove photo'); removePhoto.type = 'button'; removePhoto.hidden = !isPhotoAvatar(user.avatar);
+  const photoStatus = uiEl('p', 'avatar-edit__status', 'JPEG, PNG, WebP or GIF. We crop it to a square.'); photoStatus.setAttribute('role', 'status');
+  photoButtons.append(choosePhoto, removePhoto);
+  photoText.append(uiEl('label', 'st-label', 'Profile photo'), photoButtons, photoStatus);
+  photoField.append(photoPreview, photoText, photoFile);
+  let photoChanged = false;
+  const setPhotoState = (avatarValue) => {
+    currentUser = { ...currentUser, avatar: avatarValue };
+    setAvatar(photoPreview, avatarValue || 'gradient-violet', initial);
+    choosePhoto.textContent = isPhotoAvatar(avatarValue) ? 'Change photo' : 'Upload photo';
+    removePhoto.hidden = !isPhotoAvatar(avatarValue);
+    updateSignedInUI();
+    photoChanged = true;
+  };
+  const photoMessage = (text, isError = false) => { photoStatus.textContent = text; photoStatus.classList.toggle('is-error', isError); };
+  choosePhoto.addEventListener('click', () => photoFile.click());
+  photoFile.addEventListener('change', async () => {
+    const file = photoFile.files?.[0];
+    photoFile.value = '';
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) { photoMessage('Choose a JPEG, PNG, WebP or GIF image.', true); return; }
+    choosePhoto.disabled = removePhoto.disabled = true;
+    photoMessage('Uploading…');
+    try {
+      const prepared = await prepareAvatarFile(file);
+      const formData = new FormData(); formData.append('photo', prepared);
+      const result = await api('/auth/avatar', { method: 'POST', body: formData });
+      setPhotoState(result.user.avatar);
+      photoMessage('Photo updated.');
+    } catch (e) { photoMessage(e.message || 'Could not upload that photo.', true); }
+    finally { choosePhoto.disabled = removePhoto.disabled = false; }
+  });
+  removePhoto.addEventListener('click', async () => {
+    choosePhoto.disabled = removePhoto.disabled = true;
+    photoMessage('Removing…');
+    try {
+      const result = await api('/auth/profile', { method: 'PATCH', body: JSON.stringify({ avatar: 'gradient-violet' }) });
+      setPhotoState(result.user.avatar || 'gradient-violet');
+      photoMessage('Photo removed.');
+    } catch (e) { photoMessage(e.message || 'Could not remove the photo.', true); }
+    finally { choosePhoto.disabled = removePhoto.disabled = false; }
+  });
+
+  // Profile banner: upload, replace or remove. Saved straight away.
+  const bannerField = uiEl('div', 'field banner-edit');
+  let bannerValue = user.banner || null;
+  const bannerPreview = uiEl('div', 'banner-edit__preview'); bannerPreview.setAttribute('aria-hidden', 'true');
+  const paintBanner = () => applyBanner(bannerPreview, { ...user, banner: bannerValue }, pfCover(user.username));
+  paintBanner();
+  const bannerRow = uiEl('div', 'banner-edit__row');
+  const bannerFile = document.createElement('input'); bannerFile.type = 'file'; bannerFile.accept = 'image/jpeg,image/png,image/webp,image/gif'; bannerFile.hidden = true;
+  const chooseBanner = uiEl('button', 'button', isPhotoAvatar(bannerValue) ? 'Change banner' : 'Add banner'); chooseBanner.type = 'button';
+  const removeBanner = uiEl('button', 'button', 'Remove banner'); removeBanner.type = 'button'; removeBanner.hidden = !isPhotoAvatar(bannerValue);
+  const bannerStatus = uiEl('p', 'avatar-edit__status', 'Wide pictures work best. We crop to 1600 × 600. Without one, your first game’s banner is used.'); bannerStatus.setAttribute('role', 'status');
+  bannerRow.append(chooseBanner, removeBanner);
+  bannerField.append(uiEl('label', 'st-label', 'Profile banner'), bannerPreview, bannerRow, bannerStatus, bannerFile);
+  const bannerMessage = (text, isError = false) => { bannerStatus.textContent = text; bannerStatus.classList.toggle('is-error', isError); };
+  const setBannerState = (value) => {
+    bannerValue = value || null;
+    currentUser = { ...currentUser, banner: bannerValue };
+    paintBanner();
+    chooseBanner.textContent = isPhotoAvatar(bannerValue) ? 'Change banner' : 'Add banner';
+    removeBanner.hidden = !isPhotoAvatar(bannerValue);
+    photoChanged = true;
+  };
+  chooseBanner.addEventListener('click', () => bannerFile.click());
+  bannerFile.addEventListener('change', async () => {
+    const file = bannerFile.files?.[0];
+    bannerFile.value = '';
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) { bannerMessage('Choose a JPEG, PNG, WebP or GIF image.', true); return; }
+    chooseBanner.disabled = removeBanner.disabled = true;
+    bannerMessage('Uploading…');
+    try {
+      const prepared = await prepareBannerFile(file);
+      const formData = new FormData(); formData.append('photo', prepared);
+      const result = await api('/auth/banner', { method: 'POST', body: formData });
+      setBannerState(result.user.banner);
+      bannerMessage('Banner updated.');
+    } catch (e) { bannerMessage(e.message || 'Could not upload that banner.', true); }
+    finally { chooseBanner.disabled = removeBanner.disabled = false; }
+  });
+  removeBanner.addEventListener('click', async () => {
+    chooseBanner.disabled = removeBanner.disabled = true;
+    bannerMessage('Removing…');
+    try {
+      await api('/auth/profile', { method: 'PATCH', body: JSON.stringify({ banner: null }) });
+      setBannerState(null);
+      bannerMessage('Banner removed.');
+    } catch (e) { bannerMessage(e.message || 'Could not remove the banner.', true); }
+    finally { chooseBanner.disabled = removeBanner.disabled = false; }
+  });
+  body.append(photoField, bannerField, nameField, bioField, gamesRow);
 
   const foot = uiEl('div', 'sheet-foot');
   const cancel = uiEl('button', 'button', 'Cancel'); cancel.type = 'button'; cancel.addEventListener('click', () => dialog.close());
@@ -2169,7 +2742,7 @@ function openEditProfile(user) {
     } catch (e) { toast(e.message); save.disabled = false; }
   });
   dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
-  dialog.addEventListener('close', () => dialog.remove());
+  dialog.addEventListener('close', () => { dialog.remove(); if (photoChanged) void renderProfile(); });
   document.body.append(dialog); dialog.showModal(); name.focus();
 }
 
@@ -2233,14 +2806,15 @@ async function renderSettings(host) {
   const privacyCard = stCard('Privacy');
   privacyCard.append(
     stRow('Profile visibility', 'Who can see your profile and posts.', stSelect('profileVisibility', [['public', 'Public'], ['private', 'Private']], privacy.profileVisibility || 'public', 'Profile visibility')),
-    stRow('Friend requests', 'Who can send you friend requests.', stSelect('friendRequests', [['everyone', 'Everyone'], ['nobody', 'Nobody']], privacy.friendRequests || 'everyone', 'Friend requests'))
+    stRow('Friend requests', 'Who can send you friend requests.', stSelect('friendRequests', [['everyone', 'Everyone'], ['nobody', 'Nobody']], privacy.friendRequests || 'everyone', 'Friend requests')),
+    stRow('Show when you’re active', 'Friends see a green dot and “Active now” when you’re online. Turn this off and you appear offline.', stSwitch('showOnlineStatus', privacy.showOnlineStatus !== false, 'Show when you’re active'))
   );
   const saveBar = uiEl('div', 'st-save'); const savePrefs = uiEl('button', 'button button--primary', 'Save preferences'); savePrefs.type = 'submit'; saveBar.append(savePrefs);
   form.append(notifications, privacyCard, saveBar);
   form.addEventListener('submit', async (event) => {
     event.preventDefault(); const values = new FormData(form); savePrefs.disabled = true;
     try {
-      await api('/auth/settings', { method: 'PATCH', body: JSON.stringify({ notificationPreferences: { comments: values.has('comments'), reactions: values.has('reactions'), communities: values.has('communities') }, privacy: { profileVisibility: values.get('profileVisibility'), friendRequests: values.get('friendRequests') } }) });
+      await api('/auth/settings', { method: 'PATCH', body: JSON.stringify({ notificationPreferences: { comments: values.has('comments'), reactions: values.has('reactions'), communities: values.has('communities') }, privacy: { profileVisibility: values.get('profileVisibility'), friendRequests: values.get('friendRequests'), showOnlineStatus: values.has('showOnlineStatus') } }) });
       toast('Settings saved.');
     } catch (e) { toast(e.message); } finally { savePrefs.disabled = false; }
   });

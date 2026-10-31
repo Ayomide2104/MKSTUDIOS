@@ -5,6 +5,8 @@ const userSchema = new mongoose.Schema({
   displayName: { type: String, trim: true, maxlength: 40, default: '' },
   bio: { type: String, trim: true, maxlength: 280, default: '' },
   avatar: { type: String, default: null },
+  banner: { type: String, default: null },
+  lastActiveAt: { type: Date, default: null },
   email: { type: String, trim: true, lowercase: true, maxlength: 254, default: undefined },
   passwordHash: { type: String, required: true, select: false },
   genres: { type: [String], default: [] },
