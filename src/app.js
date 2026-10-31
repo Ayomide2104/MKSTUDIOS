@@ -18,7 +18,17 @@ const allowedOrigins = configuredOrigins
   .split(',').map((origin) => origin.trim()).filter(Boolean);
 
 app.disable('x-powered-by');
-app.use(helmet());
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+        // Allow uploaded photos (Cloudinary) and local previews to display.
+        'img-src': ["'self'", 'data:', 'blob:', 'https://res.cloudinary.com'],
+      },
+    },
+  })
+);
 app.use(cors({
   credentials: true,
   origin(origin, callback) {
